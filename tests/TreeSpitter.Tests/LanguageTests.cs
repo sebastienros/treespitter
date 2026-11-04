@@ -12,6 +12,11 @@ public sealed class LanguageTests
     {
         var language = Fixtures.Language(grammar);
         var loaded = Language.Load(language.Save());
+        if (language.ExternalScannerFactory is { } scanner)
+        {
+            // The scanner is code: it isn't saved with the tables
+            loaded.WithExternalScanner(scanner);
+        }
 
         Assert.Equal(language.StateCount, loaded.StateCount);
         Assert.Equal(language.SymbolCount, loaded.SymbolCount);
