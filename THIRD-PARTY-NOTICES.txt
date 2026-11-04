@@ -12,7 +12,7 @@ License:
 
 The repository vendors grammars and corpora of tree-sitter grammars, under grammars/, used by the tests and the
 benchmarks. The TreeSpitter.Languages package contains the parse tables and lexers generated from the grammar.json files
-of the JSON, Go, Java and C grammars, under their MIT licenses below. Each directory keeps the license of its project and
+of these grammars, and the C# ports of their external scanners, under their licenses below. Each directory keeps the license of its project and
 a SOURCE.md with its origin. benchmarks/TreeSpitter.Benchmarks/Inputs vendors two source files of tree-sitter (MIT, see
 its LICENSE and SOURCE.md) as benchmark inputs; they aren't part of the packages.
 
@@ -48,7 +48,7 @@ SOFTWARE.
 ---------------------------------------------------------
 
 tree-sitter-json - MIT
-https://github.com/tree-sitter/tree-sitter-json @ 254c42a6476413b776221e03982ac8ae159eeb72
+https://github.com/tree-sitter/tree-sitter-json @ 001c28d7a29832b06b0e831ec77845553c89b56d
 Copyright (c) 2014 Max Brunsfeld
 Used by: grammars/json (test fixture and TreeSpitter.Languages, see its LICENSE)
 
@@ -69,7 +69,7 @@ Used by: grammars/java (test fixture and TreeSpitter.Languages, see its LICENSE)
 ---------------------------------------------------------
 
 tree-sitter-c - MIT
-https://github.com/tree-sitter/tree-sitter-c @ b780e47fc780ddc8da13afa35a3f4ed5c157823d
+https://github.com/tree-sitter/tree-sitter-c @ ae19b676b13bdcc13b7665397e6d9b14975473dd
 Copyright (c) 2014 Max Brunsfeld
 Used by: grammars/c (test fixture and TreeSpitter.Languages, see its LICENSE)
 
@@ -80,6 +80,27 @@ https://github.com/tree-sitter/tree-sitter-css @ dda5cfc5722c429eaba1c910ca32c2c
 Copyright (c) 2018 Max Brunsfeld
 Used by: grammars/css (test fixture and TreeSpitter.Languages, see its LICENSE), and
 src/TreeSpitter.Languages/Scanners/CssScanner.cs (port of its src/scanner.c)
+
+---------------------------------------------------------
+
+tree-sitter-embedded-template - MIT
+https://github.com/tree-sitter/tree-sitter-embedded-template @ 3499d85f0a0d937c507a4a65368f2f63772786e1
+Copyright (c) 2018 Max Brunsfeld
+Used by: grammars/embedded-template (test fixture and TreeSpitter.Languages, see its LICENSE)
+
+---------------------------------------------------------
+
+tree-sitter-ql - MIT
+https://github.com/tree-sitter/tree-sitter-ql @ 1fd627a4e8bff8c24c11987474bd33112bead857
+Copyright (c) 2019-2024 GitHub, Inc.
+Used by: grammars/ql (test fixture and TreeSpitter.Languages, see its LICENSE)
+
+---------------------------------------------------------
+
+tree-sitter-verilog - MIT
+https://github.com/tree-sitter/tree-sitter-verilog @ 227d277b6a1a5e2bf818d6206935722a7503de08
+Copyright (c) 2018-2023 Aliaksei Chapyzhenka
+Used by: grammars/verilog (test fixture and TreeSpitter.Languages, see its LICENSE)
 
 ---------------------------------------------------------
 
