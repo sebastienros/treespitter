@@ -46,8 +46,8 @@ internal sealed class ParserEngine<TLexer, TTable> : IParserEngine
     private int _reusableCount;
     private int _reusableLastExternalToken;
 
-    // The external scanner, and its state after the last external token found
-    private readonly IExternalScanner? _scanner;
+    // The external scanner, created for each parse, and its state after the last external token found
+    private IExternalScanner? _scanner;
     private readonly byte[] _scannerState = new byte[ExternalScanner.StateCapacity];
     private int _scannerStateLength;
     private bool _scannerStateChanged;
@@ -157,6 +157,13 @@ internal sealed class ParserEngine<TLexer, TTable> : IParserEngine
         _cachedTokenPosition = -1;
         _cachedTokenLastExternalToken = 0;
         ResetReusableNode(oldRoot);
+
+        // Like tree-sitter (ts_parser__external_scanner_create), each parse starts with a new scanner: the state that
+        // an empty serialized state doesn't reset doesn't leak from the previous parse
+        if (_scanner is not null)
+        {
+            _scanner = _language.ExternalScannerFactory!.Invoke();
+        }
 
         var lastPosition = 0;
         int versionCount;
