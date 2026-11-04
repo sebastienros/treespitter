@@ -733,8 +733,8 @@ internal sealed class Minimizer(ParseTable parseTable, SyntaxGrammar syntaxGramm
                 continue;
             }
 
-            if (newToken.IsTerminal &&
-                (tokenConflictMap.DoesConflict(newToken.Index, token.Index) || tokenConflictMap.DoesMatchSameString(newToken.Index, token.Index)))
+            // Like tree-sitter, the index of the new token is used even for the end of the input, whose index is 0
+            if (tokenConflictMap.DoesConflict(newToken.Index, token.Index) || tokenConflictMap.DoesMatchSameString(newToken.Index, token.Index))
             {
                 return true;
             }

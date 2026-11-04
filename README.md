@@ -25,27 +25,36 @@ like the native benchmarks.
 
 | Input | Native | Native UTF-8 | TreeSpitter VM | TreeSpitter generated | Speed-up |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| JSON, 10 KB | 1.25 ms | 1.13 ms | 0.300 ms | 0.294 ms | 3.9× |
-| Go, 10 KB | 1.59 ms | 1.59 ms | 0.384 ms | 0.383 ms | 4.2× |
-| Java, 10 KB | 1.45 ms | 1.49 ms | 0.280 ms | 0.281 ms | 5.3× |
-| C, 10 KB | 1.42 ms | 1.38 ms | 0.237 ms | 0.239 ms | 5.8× |
-| JSON, 100 KB | 12.1 ms | 11.8 ms | 2.77 ms | 2.79 ms | 4.2× |
-| Go, 100 KB | 17.2 ms | 17.1 ms | 3.95 ms | 3.60 ms | 4.7× |
-| Java, 100 KB | 15.2 ms | 15.0 ms | 2.91 ms | 2.94 ms | 5.1× |
-| C, 100 KB | 14.8 ms | 14.7 ms | 2.33 ms | 2.31 ms | 6.4× |
+| JSON, 10 KB | 1.25 ms | 1.21 ms | 0.305 ms | 0.320 ms | 3.8× |
+| Go, 10 KB | 1.62 ms | 1.65 ms | 0.401 ms | 0.411 ms | 4.0× |
+| Java, 10 KB | 1.44 ms | 1.45 ms | 0.302 ms | 0.293 ms | 4.9× |
+| C, 10 KB | 1.43 ms | 1.44 ms | 0.240 ms | 0.239 ms | 6.0× |
+| JSON, 100 KB | 11.6 ms | 11.6 ms | 3.02 ms | 2.96 ms | 3.9× |
+| Go, 100 KB | 16.5 ms | 16.5 ms | 4.00 ms | 3.96 ms | 4.2× |
+| Java, 100 KB | 14.6 ms | 14.5 ms | 2.95 ms | 3.00 ms | 4.8× |
+| C, 100 KB | 14.8 ms | 14.1 ms | 2.32 ms | 2.35 ms | 6.0× |
 
-The speed-up is the generated parser against the native parser on the same UTF-8 input. A parse allocates 80 bytes when
-the trees are disposed; without `Dispose()` each tree owns its arrays (0.4 MB for 10 KB, 4 to 5.6 MB for 100 KB) and a
-parse takes 10 to 20% longer.
+The speed-up is the generated parser against the native parser on the same UTF-8 input. A parse of these inputs
+allocates 72 bytes when the trees are disposed (the memory of a disposed tree goes back to its parser).
 
 Real-world files: tree-sitter's own `parser.c` and `query.c`, and the 237 KB pretty-printed `grammar.json` of
 tree-sitter-c:
 
 | File | Native | Native UTF-8 | TreeSpitter generated | Speed-up |
 | --- | ---: | ---: | ---: | ---: |
-| `grammar.json` (JSON, 237 KB) | 13.8 ms | 13.9 ms | 2.65 ms | 5.3× |
-| `parser.c` (C, 79 KB) | 8.28 ms | 7.82 ms | 1.67 ms | 4.7× |
-| `query.c` (C, 149 KB) | 16.3 ms | 16.2 ms | 3.77 ms | 4.3× |
+| `grammar.json` (JSON, 237 KB) | 13.5 ms | 13.3 ms | 2.91 ms | 4.6× |
+| `parser.c` (C, 79 KB) | 7.94 ms | 7.79 ms | 1.71 ms | 4.6× |
+| `query.c` (C, 149 KB) | 16.3 ms | 15.4 ms | 3.74 ms | 4.1× |
+
+Incremental parsing: a character inserted in the middle of an identifier or a number of the 100 KB inputs, or removed,
+then the new input parsed with the edited tree, like an editor does on each keystroke:
+
+| Input | Native full parse | Native incremental | TreeSpitter full parse | TreeSpitter incremental | Speed-up |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| JSON, 100 KB | 13.2 ms | 421 µs | 2.93 ms | 173 µs | 2.4× |
+| Go, 100 KB | 16.6 ms | 232 µs | 3.92 ms | 73 µs | 3.2× |
+| Java, 100 KB | 14.9 ms | 145 µs | 3.00 ms | 31 µs | 4.7× |
+| C, 100 KB | 14.5 ms | 300 µs | 2.36 ms | 102 µs | 2.9× |
 
 Preparing a language, which tree-sitter does ahead of time with `tree-sitter generate` and a C compiler:
 
@@ -96,11 +105,29 @@ Console.WriteLine(pair.StartPoint);                     // [0, 2]
 
 The input is UTF-8, positions are byte offsets like in tree-sitter: `Parse(byte[])`, `Parse(ReadOnlyMemory<byte>)` and
 `ParseFile(path)` parse bytes directly, `Parse(string)` encodes the string first. A `Parser` isn't thread-safe; a
-`Language` is immutable and can be shared. Disposing a tree gives its memory back to its parser.
+`Language` is immutable and can be shared. Disposing a tree gives its memory back to its parser (once all the trees sharing it, see below, are disposed).
 
 Nodes have the tree-sitter model: `Type`, `Symbol`, `IsNamed`, `IsExtra`, `IsError`, `IsMissing`, `HasError`,
-`Children`, `NamedChildren`, `ChildByFieldName`, `FieldName`, `Parent`, `StartByte`/`EndByte`, `StartPoint`/`EndPoint`
-and `Text`. Syntax errors produce `ERROR` and `MISSING` nodes, with the error recovery of tree-sitter.
+`HasChanges`, `Children`, `NamedChildren`, `ChildByFieldName`, `FieldName`, `Parent`, `StartByte`/`EndByte`,
+`StartPoint`/`EndPoint` and `Text`. Syntax errors produce `ERROR` and `MISSING` nodes, with the error recovery of
+tree-sitter.
+
+### Incremental parsing
+
+Like `ts_tree_edit` and `ts_parser_parse` with an old tree: describe the edit of the input to the tree, then parse the
+new input with the edited tree. The unchanged nodes are reused, the new tree shares them, and the old tree stays valid.
+
+```csharp
+using var tree = parser.Parse("""{"a": [1, 2]}""");
+
+// {"a": [1, 2]} -> {"a": [1, 20]}: one byte inserted at offset 11
+tree.Edit(new InputEdit(StartByte: 11, OldEndByte: 11, NewEndByte: 12));
+using var newTree = parser.Parse("""{"a": [1, 20]}""", tree);
+```
+
+`Edit` shifts the nodes after the edit and marks the nodes touching it (`HasChanges`); `Copy()` returns a cheap copy
+of a tree to edit while keeping the original. The trees of the incremental parses are the trees of tree-sitter's
+incremental parses: the benchmarks compare them on the random edits of tree-sitter's corpus tests.
 
 ### Precompiled parsers
 
@@ -163,17 +190,18 @@ treespitter test <grammar> <corpus> [-v] [--filter text]          runs tree-sitt
 The whole DSL is supported: `seq`, `choice`, `optional`, `repeat`, `repeat1`, `prec` (`left`, `right`, `dynamic`,
 named `precedences`), `token`, `token.immediate`, `alias`, `field`, `extras`, `word`, `inline`, `supertypes`,
 `conflicts`, `reserved`, and grammars extending other grammars through `require` or `import`. The generator is a port
-of `tree-sitter generate` v0.25.10 and reports the same errors (unresolved conflicts, empty rules, ...).
+of `tree-sitter generate` v0.25.10 and reports the same errors (unresolved conflicts, empty rules, ...). The parse
+tables have the states of the `parser.c` files of the grammars.
 
 | Grammar | Corpus tests passing | Parse states | Lex states |
 | --- | ---: | ---: | ---: |
 | [tree-sitter-json](https://github.com/tree-sitter/tree-sitter-json) | 7 / 7 | 32 | 44 |
-| [tree-sitter-go](https://github.com/tree-sitter/tree-sitter-go) | 67 / 67 | 1301 | 165 |
+| [tree-sitter-go](https://github.com/tree-sitter/tree-sitter-go) | 67 / 67 | 1442 | 165 |
 | [tree-sitter-java](https://github.com/tree-sitter/tree-sitter-java) | 108 / 108 | 1385 | 194 |
-| [tree-sitter-c](https://github.com/tree-sitter/tree-sitter-c) | 85 / 85 | 1815 | 324 |
+| [tree-sitter-c](https://github.com/tree-sitter/tree-sitter-c) | 85 / 85 | 2015 | 324 |
 
-Limitations: no incremental parsing (tree edits and node reuse), no included ranges, no queries, and no external
-scanners (grammars with `externals` compile, but their external tokens never match).
+Limitations: no included ranges, no changed ranges between trees, no queries, and no external scanners (grammars with
+`externals` compile, but their external tokens never match).
 
 ## Build
 

@@ -5,12 +5,13 @@ namespace TreeSpitter;
 /// <summary>The parse loop, for a lex function. Implemented by <see cref="ParserEngine{TLexer}"/>.</summary>
 internal interface IParserEngine
 {
-    SyntaxTree Parse(byte[] input, int length);
+    SyntaxTree Parse(byte[] input, int length, SyntaxTree? oldTree);
 }
 
 /// <summary>
-/// The GLR parser: a port of tree-sitter's <c>parser.c</c>, without incremental parsing. The engine is specialized for
-/// the lex function of the language, the table-driven lexer of the VM or a generated lexer.
+/// The GLR parser: a port of tree-sitter's <c>parser.c</c>. The engine is specialized for the lex function of the
+/// language, the table-driven lexer of the VM or a generated lexer. An incremental parse reuses the unchanged subtrees
+/// of the old tree, and appends its nodes to the arena of the old tree.
 /// </summary>
 internal sealed class ParserEngine<TLexer> : IParserEngine
     where TLexer : struct, ILexFunction
@@ -24,7 +25,8 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
     private readonly Language _language;
     private readonly TLexer _lexFunction;
     private readonly Lexer _lexer = new();
-    private readonly SubtreeArena _arena;
+    private SubtreeArena _arena;
+    private SubtreeArena? _spareArena;
     private readonly ParseStack _stack;
     private readonly SubtreeList _trailingExtras = new();
     private readonly SubtreeList _trailingExtras2 = new();
@@ -36,31 +38,112 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
     private int _acceptCount;
     private int _cachedToken;
     private int _cachedTokenPosition;
-    private LineIndex? _lines;
+
+    // The node of the old tree that can be reused next, tree-sitter's ReusableNode: a path from the root
+    private ReusableEntry[] _reusable = new ReusableEntry[64];
+    private int _reusableCount;
 
     public ParserEngine(Language language, TLexer lexFunction)
     {
         _language = language;
         _lexFunction = lexFunction;
-        _arena = new SubtreeArena(language);
+        _arena = new SubtreeArena(language, ReturnArena);
+        _spareArena = _arena;
         _stack = new ParseStack(_arena);
         _actions = language.ParseActions;
     }
 
-    public SyntaxTree Parse(byte[] input, int length)
+    private struct ReusableEntry
+    {
+        public int Tree;
+        public int ChildIndex;
+        public int ByteOffset;
+    }
+
+    /// <summary>Called when the last tree of an arena is disposed: the next parse can reuse its memory.</summary>
+    private void ReturnArena(SubtreeArena arena) => Volatile.Write(ref _spareArena, arena);
+
+    public SyntaxTree Parse(byte[] input, int length, SyntaxTree? oldTree)
+    {
+        if (oldTree is null)
+        {
+            var arena = Interlocked.Exchange(ref _spareArena, null) ?? new SubtreeArena(_language, ReturnArena);
+
+            // The capacity of the arena is estimated from the previous parses, to avoid resizing the arrays
+            arena.Reset(EstimateCapacity(_nodesPerKilobyte, length), EstimateCapacity(_childrenPerKilobyte, length));
+            arena.AddReference();
+            try
+            {
+                var tree = Parse(arena, input, length, 0);
+                if (length > 0)
+                {
+                    _nodesPerKilobyte = Math.Max(_nodesPerKilobyte, (int)Math.Min(int.MaxValue, arena.Count * 1024L / length));
+                    _childrenPerKilobyte = Math.Max(_childrenPerKilobyte, (int)Math.Min(int.MaxValue, arena.ChildrenCount * 1024L / length));
+                }
+
+                arena.LiveCount = arena.Count;
+                return tree;
+            }
+            finally
+            {
+                arena.RemoveReference();
+            }
+        }
+
+        if (oldTree.Language != _language)
+        {
+            throw new ArgumentException("The old tree was parsed with another language.", nameof(oldTree));
+        }
+
+        var oldArena = oldTree.Arena;
+        oldArena.AddReference();
+        try
+        {
+            // The trees of a lineage share their arena: parses and edits of these trees are serialized
+            lock (oldArena)
+            {
+                oldTree.Balance();
+                if (oldArena.Count <= 2 * oldArena.LiveCount + 4096)
+                {
+                    return Parse(oldArena, input, length, oldTree.Root);
+                }
+
+                // The arena is mostly made of the nodes of older trees: the old tree is copied to a new arena, so that
+                // the arenas don't grow forever. The cost of the copy is amortized over the parses.
+                var arena = Interlocked.Exchange(ref _spareArena, null) ?? new SubtreeArena(_language, ReturnArena);
+                arena.Reset(oldArena.LiveCount + 1024, (int)Math.Min(int.MaxValue / 2, (long)oldArena.ChildrenCount * oldArena.LiveCount / oldArena.Count) + 1024);
+                var root = oldArena.CopyTree(oldTree.Root, arena);
+                arena.LiveCount = arena.Count;
+                arena.AddReference();
+                try
+                {
+                    return Parse(arena, input, length, root);
+                }
+                finally
+                {
+                    arena.RemoveReference();
+                }
+            }
+        }
+        finally
+        {
+            oldArena.RemoveReference();
+        }
+    }
+
+    private SyntaxTree Parse(SubtreeArena arena, byte[] input, int length, int oldRoot)
     {
         _lexer.Input = input;
         _lexer.Length = length;
-        // The capacity of the arena is estimated from the previous parses, to avoid resizing the arrays
-        _arena.Reset(EstimateCapacity(_nodesPerKilobyte, length), EstimateCapacity(_childrenPerKilobyte, length));
-        _arena.Lines = null;
-        _lines = null;
-        _stack.Lines = null;
-        _stack.Reset();
+        _arena = arena;
+        arena.SetInput(input, length);
+        var firstOwnedNode = arena.Count;
+        _stack.Reset(arena);
         _finishedTree = 0;
         _acceptCount = 0;
         _cachedToken = 0;
         _cachedTokenPosition = -1;
+        ResetReusableNode(oldRoot);
 
         var lastPosition = 0;
         int versionCount;
@@ -74,9 +157,10 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                     break;
                 }
 
+                var allowNodeReuse = versionCount == 1;
                 while (_stack.IsActive(version))
                 {
-                    Advance(version);
+                    Advance(version, allowNodeReuse);
                     var position = _stack.Position(version);
                     if (position > lastPosition || (version > 0 && position == lastPosition))
                     {
@@ -95,31 +179,167 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
         }
         while (versionCount != 0);
 
-        if (length > 0)
-        {
-            _nodesPerKilobyte = Math.Max(_nodesPerKilobyte, (int)Math.Min(int.MaxValue, _arena.Count * 1024L / length));
-            _childrenPerKilobyte = Math.Max(_childrenPerKilobyte, (int)Math.Min(int.MaxValue, _arena.ChildrenCount * 1024L / length));
-        }
+        _reusableCount = 0;
+        _stack.Clear();
+        arena.SetInput(null, 0);
 
-        return new SyntaxTree(_language, input, length, _arena, _finishedTree);
+        // The tree is balanced when it's edited or reused
+        return new SyntaxTree(_language, input, length, arena, _finishedTree, firstOwnedNode);
     }
 
     private static int EstimateCapacity(int perKilobyte, int length) =>
         (int)Math.Min(int.MaxValue / 2, 64 + (long)length * perKilobyte / 1024 * 9 / 8);
 
-    private LineIndex Lines()
+    private int Row(int position) => _arena.Lines.Row(position);
+
+    // The nodes of the old tree
+
+    private void ResetReusableNode(int root)
     {
-        if (_lines is null)
+        _reusableCount = 0;
+        if (root == 0)
         {
-            _lines = new LineIndex(_lexer.Input, _lexer.Length);
-            _arena.Lines = _lines;
-            _stack.Lines = _lines;
+            return;
         }
 
-        return _lines;
+        _reusable[0] = new ReusableEntry { Tree = root, ChildIndex = 0, ByteOffset = 0 };
+        _reusableCount = 1;
+
+        // The root isn't reused: its structure was changed when it was accepted (the end and the extras were added)
+        if (!ReusableDescend())
+        {
+            _reusableCount = 0;
+        }
     }
 
-    private int Row(int position) => Lines().Row(position);
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ReusableAdvance()
+    {
+        ref var last = ref _reusable[_reusableCount - 1];
+        var byteOffset = last.ByteOffset + _arena.TotalBytes(last.Tree);
+        int tree;
+        int nextIndex;
+        do
+        {
+            nextIndex = _reusable[--_reusableCount].ChildIndex + 1;
+            if (_reusableCount == 0)
+            {
+                return;
+            }
+
+            tree = _reusable[_reusableCount - 1].Tree;
+        }
+        while (_arena[tree].ChildCount <= nextIndex);
+
+        PushReusable(_arena.Children[_arena[tree].FirstChild + nextIndex], nextIndex, byteOffset);
+    }
+
+    private bool ReusableDescend()
+    {
+        var last = _reusable[_reusableCount - 1];
+        ref var data = ref _arena[last.Tree];
+        if (data.ChildCount == 0)
+        {
+            return false;
+        }
+
+        PushReusable(_arena.Children[data.FirstChild], 0, last.ByteOffset);
+        return true;
+    }
+
+    private void ReusableAdvancePastLeaf()
+    {
+        while (ReusableDescend())
+        {
+        }
+
+        ReusableAdvance();
+    }
+
+    private void PushReusable(int tree, int childIndex, int byteOffset)
+    {
+        if (_reusableCount == _reusable.Length)
+        {
+            Array.Resize(ref _reusable, _reusable.Length * 2);
+        }
+
+        _reusable[_reusableCount++] = new ReusableEntry { Tree = tree, ChildIndex = childIndex, ByteOffset = byteOffset };
+    }
+
+    /// <summary>
+    /// Finds a node of the old tree that can be reused at a position, tree-sitter's <c>ts_parser__reuse_node</c>.
+    /// Returns 0 when there's none. The top of the stack can be broken down: the caller reads the state again. The
+    /// state isn't passed by reference, so that the locals of the parse loop stay in registers.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private int ReuseNode(int version, ushort state, int position)
+    {
+        while (_reusableCount > 0)
+        {
+            var entry = _reusable[_reusableCount - 1];
+            var result = entry.Tree;
+            ref var data = ref _arena[result];
+            var byteOffset = entry.ByteOffset;
+            var endByteOffset = data.Symbol == Language.EndSymbol ? int.MaxValue : byteOffset + data.Padding + data.Size;
+            if (byteOffset > position)
+            {
+                break;
+            }
+
+            if (byteOffset < position)
+            {
+                if (endByteOffset <= position || !ReusableDescend())
+                {
+                    ReusableAdvance();
+                }
+
+                continue;
+            }
+
+            if ((data.Flags & (SubtreeFlags.HasChanges | SubtreeFlags.IsMissing | SubtreeFlags.FragileLeft | SubtreeFlags.FragileRight)) != 0 ||
+                data.Symbol == Language.ErrorSymbol)
+            {
+                if (!ReusableDescend())
+                {
+                    ReusableAdvance();
+                    BreakdownTopOfStack(version);
+                    state = _stack.State(version);
+                }
+
+                continue;
+            }
+
+            _language.TableEntry(state, _arena.LeafSymbol(result), out var entryCount, out var entryReusable);
+            if (!CanReuseFirstLeaf(state, result, entryCount, entryReusable))
+            {
+                ReusableAdvancePastLeaf();
+                break;
+            }
+
+            return result;
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Descends into a reused lookahead until a node created in the current state, tree-sitter's
+    /// <c>ts_parser__breakdown_lookahead</c>.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private int BreakdownLookahead(int lookahead, ushort state)
+    {
+        var didDescend = false;
+        var tree = _reusableCount > 0 ? _reusable[_reusableCount - 1].Tree : 0;
+        while (_arena[tree].ChildCount > 0 && _arena[tree].ParseState != state)
+        {
+            ReusableDescend();
+            tree = _reusable[_reusableCount - 1].Tree;
+            didDescend = true;
+        }
+
+        return didDescend ? tree : lookahead;
+    }
 
     // Lexing
 
@@ -169,6 +389,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
         var firstErrorCharacter = 0;
         var errorStart = 0;
         var errorEnd = 0;
+        var lookaheadEnd = 0;
         lexer.Position = startPosition;
 
         while (true)
@@ -176,6 +397,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
             LexerStart();
             var found = _lexFunction.Lex(lexer, lexState);
             LexerFinish();
+            lookaheadEnd = LookaheadEnd(lexer, lookaheadEnd);
             if (found)
             {
                 break;
@@ -214,7 +436,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
 
         if (skippedError)
         {
-            return _arena.NewError(firstErrorCharacter, startPosition, errorStart, errorEnd, parseState);
+            return _arena.NewError(firstErrorCharacter, errorStart - startPosition, errorEnd - errorStart, lookaheadEnd - errorEnd, parseState);
         }
 
         var symbol = lexer.ResultSymbol;
@@ -236,7 +458,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                     }
                 }
 
-                return _arena.NewLeaf(symbol, startPosition, tokenStart, tokenEnd, parseState, isKeyword);
+                return _arena.NewLeaf(symbol, tokenStart - startPosition, tokenEnd - tokenStart, lookaheadEnd - tokenEnd, parseState, isKeyword);
             }
 
             lexer.Position = tokenStart;
@@ -250,7 +472,24 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
             }
         }
 
-        return _arena.NewLeaf(symbol, startPosition, tokenStart, tokenEnd, parseState, isKeyword);
+        return _arena.NewLeaf(symbol, tokenStart - startPosition, tokenEnd - tokenStart, lookaheadEnd - tokenEnd, parseState, isKeyword);
+    }
+
+    /// <summary>
+    /// The end of the bytes read by the lexer, tree-sitter's <c>ts_lexer_finish</c>: the lookahead character, and
+    /// the bytes that can make it an invalid sequence.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int LookaheadEnd(Lexer lexer, int lookaheadEnd)
+    {
+        var position = lexer.Position;
+        var end = position + 1;
+        if (position < lexer.Length && lexer.Input[position] >= 0x80 && Lexer.Decode(lexer.Input, position, lexer.Length, out _) == Lexer.DecodeError)
+        {
+            end += 4;
+        }
+
+        return end > lookaheadEnd ? end : lookaheadEnd;
     }
 
     private bool CanReuseFirstLeaf(ushort state, int tree, int tableEntryCount, bool tableEntryReusable)
@@ -273,8 +512,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
             return true;
         }
 
-        ref var data = ref _arena[tree];
-        if (data.End == data.Start && leafSymbol != Language.EndSymbol)
+        if (_arena[tree].Size == 0 && leafSymbol != Language.EndSymbol)
         {
             return false;
         }
@@ -339,12 +577,12 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
         return _arena.Compare(left, right) == 1;
     }
 
-    private bool SelectChildren(int left, SubtreeList children)
+    private bool SelectChildren(int left, SubtreeList children, int position)
     {
         // A temporary node, discarded after the comparison
         var nodeCount = _arena.Count;
         var childrenCount = _arena.ChildrenCount;
-        var scratch = _arena.NewNode(_arena[left].Symbol, children, 0, _stack.Position(0));
+        var scratch = _arena.NewNode(_arena[left].Symbol, children, 0, position);
         var result = SelectTree(left, scratch);
         _arena.Count = nodeCount;
         _arena.ChildrenCount = childrenCount;
@@ -400,7 +638,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                 i++;
                 var nextChildren = nextSlice.Subtrees;
                 nextChildren.RemoveTrailingExtras(_arena, _trailingExtras2);
-                if (SelectChildren(parent, nextChildren))
+                if (SelectChildren(parent, nextChildren, position))
                 {
                     _trailingExtras.CopyFrom(_trailingExtras2);
                     _trailingExtras2.Clear();
@@ -544,7 +782,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                     var childCount = data.ChildCount;
                     trees.RemoveAt(j);
                     trees.InsertRange(j, _arena.Children, firstChild, childCount);
-                    root = _arena.NewNode(symbol, trees, productionId, _arena[tree].PaddingStart);
+                    root = _arena.NewNode(symbol, trees, productionId, 0);
                     break;
                 }
             }
@@ -998,8 +1236,8 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
         }
 
         var lookaheadCost = currentErrorCost + SubtreeArena.ErrorCostPerSkippedTree +
-            (_arena[lookahead].End - _arena[lookahead].PaddingStart) * SubtreeArena.ErrorCostPerSkippedChar +
-            TotalRows(lookahead) * SubtreeArena.ErrorCostPerSkippedLine;
+            _arena.TotalBytes(lookahead) * SubtreeArena.ErrorCostPerSkippedChar +
+            TotalRows(lookahead, position) * SubtreeArena.ErrorCostPerSkippedLine;
         if (BetterVersionExists(version, false, lookaheadCost))
         {
             _stack.Halt(version);
@@ -1041,17 +1279,18 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
             var first = pop[0];
             _stack.RenumberVersion(first.Version, version);
             first.Subtrees.Add(errorRepeat);
-            errorRepeat = _arena.NewNode(Language.ErrorRepeatSymbol, first.Subtrees, 0, position);
+            errorRepeat = _arena.NewNode(Language.ErrorRepeatSymbol, first.Subtrees, 0, _stack.Position(version));
             _stack.ReturnList(first.Subtrees);
         }
 
         _stack.Push(version, errorRepeat, false, Language.ErrorState);
     }
 
-    private int TotalRows(int subtree)
+    /// <summary>The rows spanned by a subtree and its padding, at a position.</summary>
+    private int TotalRows(int subtree, int position)
     {
-        ref var data = ref _arena[subtree];
-        return data.End <= data.PaddingStart ? 0 : Row(data.End) - Row(data.PaddingStart);
+        var totalBytes = _arena.TotalBytes(subtree);
+        return totalBytes <= 0 ? 0 : Row(position + totalBytes) - Row(position);
     }
 
     private void HandleError(int version, int lookahead)
@@ -1079,7 +1318,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                     if (_language.HasReduceAction(stateAfterMissingSymbol, _arena.LeafSymbol(lookahead)))
                     {
                         var versionWithMissingTree = _stack.CopyVersion(v);
-                        var missingTree = _arena.NewMissingLeaf((ushort)missingSymbol, position);
+                        var missingTree = _arena.NewMissingLeaf((ushort)missingSymbol, _arena.TotalBytes(lookahead) + _arena[lookahead].LookaheadBytes);
                         _stack.Push(versionWithMissingTree, missingTree, false, stateAfterMissingSymbol);
                         if (DoAllPotentialReductions(versionWithMissingTree, _arena.LeafSymbol(lookahead)))
                         {
@@ -1100,12 +1339,19 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
         }
 
         _stack.RecordSummary(version, MaxSummaryDepth);
+
+        // Recovering with the current lookahead accounts for its lookahead bytes
+        if (_arena[lookahead].ChildCount > 0)
+        {
+            lookahead = BreakdownLookahead(lookahead, Language.ErrorState);
+        }
+
         Recover(version, lookahead);
     }
 
     // The parse loop
 
-    private void Advance(int version)
+    private void Advance(int version, bool allowNodeReuse)
     {
         var language = _language;
         var actions = _actions;
@@ -1116,8 +1362,21 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
         int entryIndex = 0, entryCount = 0;
         bool entryReusable;
 
+        // Reuse a node of the old tree
+        var didReuse = false;
+        if (allowNodeReuse && _reusableCount > 0)
+        {
+            lookahead = ReuseNode(version, state, position);
+            state = _stack.State(version);
+            if (lookahead != 0)
+            {
+                didReuse = true;
+                entryIndex = language.TableEntry(state, _arena.LeafSymbol(lookahead), out entryCount, out _);
+            }
+        }
+
         // Reuse the token returned by the lexer for another version
-        if (_cachedToken != 0 && _cachedTokenPosition == position)
+        if (lookahead == 0 && _cachedToken != 0 && _cachedTokenPosition == position)
         {
             entryIndex = language.TableEntry(state, _arena[_cachedToken].Symbol, out entryCount, out entryReusable);
             if (CanReuseFirstLeaf(state, _cachedToken, entryCount, entryReusable))
@@ -1162,7 +1421,18 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                             }
 
                             var nextState = action.IsExtra ? state : action.StateOrSymbol;
+                            if (_arena[lookahead].ChildCount > 0)
+                            {
+                                lookahead = BreakdownLookahead(lookahead, state);
+                                nextState = language.NextState(state, _arena[lookahead].Symbol);
+                            }
+
                             Shift(version, nextState, lookahead, action.IsExtra);
+                            if (didReuse)
+                            {
+                                ReusableAdvance();
+                            }
+
                             return;
                         }
 
@@ -1192,7 +1462,17 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                         return;
 
                     case ParseActionType.Recover:
+                        if (_arena[lookahead].ChildCount > 0)
+                        {
+                            lookahead = BreakdownLookahead(lookahead, Language.ErrorState);
+                        }
+
                         Recover(version, lookahead);
+                        if (didReuse)
+                        {
+                            ReusableAdvance();
+                        }
+
                         return;
                 }
             }

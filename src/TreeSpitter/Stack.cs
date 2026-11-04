@@ -80,7 +80,7 @@ internal sealed class ParseStack
         Summarize,
     }
 
-    private readonly SubtreeArena _arena;
+    private SubtreeArena _arena;
     private StackNode[] _nodes = new StackNode[1024];
     private int _nodeCount;
     private StackLink[] _moreLinks = new StackLink[7 * 16];
@@ -98,14 +98,13 @@ internal sealed class ParseStack
         _arena = arena;
     }
 
-    public LineIndex? Lines { get; set; }
-
     public int VersionCount => _headCount;
 
     public List<StackSlice> Slices => _slices;
 
-    public void Reset()
+    public void Reset(SubtreeArena arena)
     {
+        _arena = arena;
         _nodeCount = 1;
         _moreLinkBlocks = 0;
         _baseNode = NewNode(0, 0, false, 1);
@@ -197,7 +196,7 @@ internal sealed class ParseStack
             {
                 ref var data = ref _arena[subtree];
                 node.ErrorCost += _arena.ErrorCost(subtree);
-                node.Position = data.End;
+                node.Position += data.Padding + data.Size;
                 node.NodeCount += _arena.NodeCount(subtree);
                 node.DynamicPrecedence += data.DynamicPrecedence;
             }
@@ -638,8 +637,7 @@ internal sealed class ParseStack
                 var subtree = n.Link0.Subtree;
                 if (subtree != 0)
                 {
-                    ref var data = ref _arena[subtree];
-                    if (data.End - data.PaddingStart > 0)
+                    if (_arena.TotalBytes(subtree) > 0)
                     {
                         return true;
                     }
@@ -754,8 +752,8 @@ internal sealed class ParseStack
             return true;
         }
 
-        return l.Start - l.PaddingStart == r.Start - r.PaddingStart &&
-            l.End - l.Start == r.End - r.Start &&
+        return l.Padding == r.Padding &&
+            l.Size == r.Size &&
             l.ChildCount == r.ChildCount &&
             (l.Flags & SubtreeFlags.Extra) == (r.Flags & SubtreeFlags.Extra);
     }

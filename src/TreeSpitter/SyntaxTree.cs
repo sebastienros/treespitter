@@ -10,65 +10,126 @@ public readonly record struct Point(int Row, int Column)
 }
 
 /// <summary>
-/// A syntax tree, the result of a parse. The nodes are stored in arrays owned by the tree, and exposed as
-/// <see cref="SyntaxNode"/> values. Positions are byte offsets in the UTF-8 input.
+/// An edit of the input of a tree, in bytes: the text from <see cref="StartByte"/> to <see cref="OldEndByte"/> was
+/// replaced by the text from <see cref="StartByte"/> to <see cref="NewEndByte"/> in the new input.
+/// </summary>
+/// <param name="StartByte">The start of the edit.</param>
+/// <param name="OldEndByte">The end of the replaced text, in the old input.</param>
+/// <param name="NewEndByte">The end of the inserted text, in the new input.</param>
+public readonly record struct InputEdit(int StartByte, int OldEndByte, int NewEndByte);
+
+/// <summary>
+/// A syntax tree, the result of a parse. The nodes are exposed as <see cref="SyntaxNode"/> values. Positions are byte
+/// offsets in the UTF-8 input. A tree can be edited and passed to the next parse, which reuses its unchanged nodes:
+/// the trees of such a lineage share their memory, and the old trees stay valid.
 /// </summary>
 public sealed class SyntaxTree : IDisposable
 {
-    private SubtreeData[]? _nodes;
-    private int[]? _children;
+    private readonly byte[] _input;
     private SubtreeArena? _arena;
     private LineIndex? _lines;
 
-    internal SyntaxTree(Language language, byte[] input, int length, SubtreeArena arena, int root)
+    // The first node created by the parse of the tree, which balances the tree when it's edited or reused, or -1
+    private int _unbalancedFrom;
+
+    internal SyntaxTree(Language language, byte[] input, int length, SubtreeArena arena, int root, int unbalancedFrom)
     {
         Language = language;
+        _input = input;
         Input = new ReadOnlyMemory<byte>(input, 0, length);
-        // The arrays now belong to the tree, until it's disposed
-        (_nodes, _children) = arena.Detach();
+        arena.AddReference();
         _arena = arena;
         Root = root;
+        _unbalancedFrom = unbalancedFrom;
     }
 
     /// <summary>Gets the language of the tree.</summary>
     public Language Language { get; }
 
-    /// <summary>Gets the UTF-8 input that was parsed.</summary>
+    /// <summary>
+    /// Gets the UTF-8 input that was parsed. The input isn't changed by <see cref="Edit"/>: it's the input of the
+    /// parse, and the text and points of the nodes of an edited tree are computed from it.
+    /// </summary>
     public ReadOnlyMemory<byte> Input { get; }
 
-    internal int Root { get; }
+    internal int Root { get; private set; }
 
-    internal SubtreeData[] Nodes => _nodes ?? throw new ObjectDisposedException(nameof(SyntaxTree));
+    internal SubtreeArena Arena => _arena ?? throw new ObjectDisposedException(nameof(SyntaxTree));
 
-    internal int[] Children => _children ?? throw new ObjectDisposedException(nameof(SyntaxTree));
+    internal SubtreeData[] Nodes => Arena.Nodes;
+
+    internal int[] Children => Arena.Children;
 
     /// <summary>Gets the root node.</summary>
-    public SyntaxNode RootNode => new(this, Root, 0, 0);
+    public SyntaxNode RootNode => new(this, Root, Nodes[Root].Padding, 0, 0);
 
     /// <summary>Gets whether the tree contains syntax errors (ERROR or MISSING nodes).</summary>
     public bool HasError => Nodes[Root].ErrorCost > 0;
 
     /// <summary>
-    /// Releases the memory of the tree to its parser, which reuses it for the next parse. The tree and its nodes can't
-    /// be used anymore. Disposing trees is optional: undisposed trees are collected by the GC.
+    /// Applies an edit of the input to the tree, like tree-sitter's <c>ts_tree_edit</c>: the positions of the nodes
+    /// after the edit are shifted and the nodes touching it are marked as changed. Pass the edited tree to the next
+    /// parse of the new input, which reuses the unchanged nodes. The other trees sharing nodes with this one aren't
+    /// changed.
+    /// </summary>
+    public void Edit(InputEdit edit)
+    {
+        if (edit.StartByte < 0 || edit.OldEndByte < edit.StartByte || edit.NewEndByte < edit.StartByte)
+        {
+            throw new ArgumentOutOfRangeException(nameof(edit), "The edit must start at a positive offset and end after its start.");
+        }
+
+        var arena = Arena;
+        lock (arena)
+        {
+            Balance();
+            Root = arena.Edit(Root, edit.StartByte, edit.OldEndByte, edit.NewEndByte);
+        }
+    }
+
+    /// <summary>
+    /// Balances the repetitions of the tree like tree-sitter does after a parse, before the tree is edited or reused:
+    /// the balancing copies the nodes it changes, the other trees and the nodes read from this one aren't changed. The
+    /// caller holds the lock of the arena.
+    /// </summary>
+    internal void Balance()
+    {
+        if (_unbalancedFrom >= 0)
+        {
+            Root = Arena.Balance(Root, _unbalancedFrom);
+            _unbalancedFrom = -1;
+        }
+    }
+
+    /// <summary>
+    /// Returns a copy of the tree, to keep the tree unchanged when editing the copy. Copying is cheap: the trees share
+    /// their nodes.
+    /// </summary>
+    public SyntaxTree Copy()
+    {
+        var arena = Arena;
+        lock (arena)
+        {
+            // Balanced once for all the copies
+            Balance();
+            return new(Language, _input, Input.Length, arena, Root, -1);
+        }
+    }
+
+    /// <summary>
+    /// Releases the memory of the tree. When it's the last tree sharing it, the memory goes back to the parser, which
+    /// reuses it for the next parse. The tree and its nodes can't be used anymore. Disposing trees is optional:
+    /// undisposed trees are collected by the GC.
     /// </summary>
     public void Dispose()
     {
-        var nodes = _nodes;
-        var children = _children;
-        var arena = _arena;
-        _nodes = null;
-        _children = null;
-        _arena = null;
-        if (nodes is not null && children is not null && arena is not null)
-        {
-            arena.Return(nodes, children);
-        }
+        var arena = Interlocked.Exchange(ref _arena, null);
+        arena?.RemoveReference();
     }
 
     internal Point PointAt(int position)
     {
-        _lines ??= new LineIndex(Input.ToArray(), Input.Length);
+        _lines ??= new LineIndex(_input, Input.Length);
         var row = _lines.Row(position);
         return new Point(row, _lines.Column(position));
     }
@@ -88,13 +149,15 @@ public readonly struct SyntaxNode : IEquatable<SyntaxNode>
 {
     private readonly SyntaxTree? _tree;
     private readonly int _index;
+    private readonly int _start;
     private readonly ushort _alias;
     private readonly ushort _fieldId;
 
-    internal SyntaxNode(SyntaxTree tree, int index, ushort alias, ushort fieldId)
+    internal SyntaxNode(SyntaxTree tree, int index, int start, ushort alias, ushort fieldId)
     {
         _tree = tree;
         _index = index;
+        _start = start;
         _alias = alias;
         _fieldId = fieldId;
     }
@@ -129,19 +192,34 @@ public readonly struct SyntaxNode : IEquatable<SyntaxNode>
     public bool HasError => Data.ErrorCost > 0;
 
     /// <summary>Gets the start of the node, a byte offset.</summary>
-    public int StartByte => Data.Start;
+    public int StartByte => _tree is null ? 0 : _start;
 
     /// <summary>Gets the end of the node, a byte offset.</summary>
-    public int EndByte => Data.End;
+    public int EndByte => _tree is null ? 0 : _start + Data.Size;
 
     /// <summary>Gets the position of the start of the node.</summary>
-    public Point StartPoint => Tree.PointAt(Data.Start);
+    public Point StartPoint => Tree.PointAt(_start);
 
     /// <summary>Gets the position of the end of the node.</summary>
-    public Point EndPoint => Tree.PointAt(Data.End);
+    public Point EndPoint => Tree.PointAt(EndByte);
+
+    /// <summary>
+    /// Gets whether the node was changed by an edit of the tree (<see cref="SyntaxTree.Edit"/>), like tree-sitter's
+    /// <c>ts_node_has_changes</c>.
+    /// </summary>
+    public bool HasChanges => (Data.Flags & SubtreeFlags.HasChanges) != 0;
 
     /// <summary>Gets the text of the node.</summary>
-    public string Text => Encoding.UTF8.GetString(Tree.Input.Span.Slice(Data.Start, Data.End - Data.Start).ToArray());
+    public string Text
+    {
+        get
+        {
+            var input = Tree.Input.Span;
+            var start = Math.Min(_start, input.Length);
+            var end = Math.Min(EndByte, input.Length);
+            return Encoding.UTF8.GetString(input.Slice(start, end - start).ToArray());
+        }
+    }
 
     /// <summary>Gets the name of the field of the node in its parent, when the node was obtained from its parent.</summary>
     public string? FieldName => _fieldId == 0 ? null : Tree.Language.FieldName(_fieldId);
@@ -153,7 +231,7 @@ public readonly struct SyntaxNode : IEquatable<SyntaxNode>
         {
             var tree = Tree;
             var list = new List<SyntaxNode>();
-            CollectChildren(tree, _index, 0, list);
+            CollectChildren(tree, _index, _start - Data.Padding, 0, list);
             return list;
         }
     }
@@ -185,7 +263,7 @@ public readonly struct SyntaxNode : IEquatable<SyntaxNode>
                 var found = false;
                 foreach (var child in current.Children)
                 {
-                    if (child._index == _index)
+                    if (child._index == _index && child._start == _start)
                     {
                         return current;
                     }
@@ -237,16 +315,18 @@ public readonly struct SyntaxNode : IEquatable<SyntaxNode>
     /// Collects the visible children of a node: the hidden children are replaced by their own visible children, and
     /// the field names are inherited like in tree-sitter's tree cursor.
     /// </summary>
-    private static void CollectChildren(SyntaxTree tree, int index, ushort inheritedField, List<SyntaxNode> result)
+    private static void CollectChildren(SyntaxTree tree, int index, int position, ushort inheritedField, List<SyntaxNode> result)
     {
         var nodes = tree.Nodes;
         var children = tree.Children;
         var language = tree.Language;
-        var stack = new Stack<(int Index, int Child, int Structural, ushort Field)>();
-        stack.Push((index, 0, 0, inheritedField));
+
+        // The position of a frame is the start of the padding of its next child
+        var stack = new Stack<(int Index, int Child, int Structural, ushort Field, int Position)>();
+        stack.Push((index, 0, 0, inheritedField, position));
         while (stack.Count > 0)
         {
-            var (parent, i, structural, field) = stack.Pop();
+            var (parent, i, structural, field, childPosition) = stack.Pop();
             ref var data = ref nodes[parent];
             if (i >= data.ChildCount)
             {
@@ -273,15 +353,15 @@ public readonly struct SyntaxNode : IEquatable<SyntaxNode>
             }
 
             // Continue with the next sibling after this child
-            stack.Push((parent, i + 1, isExtra ? structural : structural + 1, field));
+            stack.Push((parent, i + 1, isExtra ? structural : structural + 1, field, childPosition + childData.Padding + childData.Size));
 
             if (alias != 0 || (childData.Flags & SubtreeFlags.Visible) != 0)
             {
-                result.Add(new SyntaxNode(tree, child, alias, childField));
+                result.Add(new SyntaxNode(tree, child, childPosition + childData.Padding, alias, childField));
             }
             else if (childData.ChildCount > 0 && childData.VisibleChildCount > 0)
             {
-                stack.Push((child, 0, 0, childField));
+                stack.Push((child, 0, 0, childField, childPosition));
             }
         }
     }
@@ -295,13 +375,13 @@ public readonly struct SyntaxNode : IEquatable<SyntaxNode>
     }
 
     /// <inheritdoc />
-    public bool Equals(SyntaxNode other) => ReferenceEquals(_tree, other._tree) && _index == other._index && _alias == other._alias;
+    public bool Equals(SyntaxNode other) => ReferenceEquals(_tree, other._tree) && _index == other._index && _start == other._start && _alias == other._alias;
 
     /// <inheritdoc />
     public override bool Equals(object? obj) => obj is SyntaxNode other && Equals(other);
 
     /// <inheritdoc />
-    public override int GetHashCode() => _index * 31 + _alias;
+    public override int GetHashCode() => (_index * 31 + _start) * 31 + _alias;
 
     /// <inheritdoc />
     public override string ToString() => IsNull ? "(null)" : ToSExpression();
@@ -343,7 +423,7 @@ internal static class SExpressionWriter
                     }
                 }
 
-                if (data.Symbol == Language.ErrorSymbol && data.ChildCount == 0 && data.End > data.Start)
+                if (data.Symbol == Language.ErrorSymbol && data.ChildCount == 0 && data.Size > 0)
                 {
                     builder.Append("(UNEXPECTED ");
                     WriteChar(builder, data.LookaheadChar);
