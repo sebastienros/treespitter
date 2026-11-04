@@ -113,10 +113,12 @@ public sealed partial class Language
         language.PublicSymbolMap = ReadUShorts(reader);
         language.FieldNames = ReadStrings(reader);
         language.ParseTable = ReadUShorts(reader);
-        var actions = new ParseActionEntry[reader.ReadInt32()];
+        var rawActions = new ulong[reader.ReadInt32()];
+        ReadBulk(reader, rawActions, sizeof(ulong));
+        var actions = new ParseActionEntry[rawActions.Length];
         for (var i = 0; i < actions.Length; i++)
         {
-            actions[i] = new ParseActionEntry(reader.ReadUInt64());
+            actions[i] = new ParseActionEntry(rawActions[i]);
         }
 
         language.ParseActions = actions;
@@ -192,12 +194,34 @@ public sealed partial class Language
     private static ushort[] ReadUShorts(BinaryReader reader)
     {
         var values = new ushort[reader.ReadInt32()];
-        for (var i = 0; i < values.Length; i++)
+        ReadBulk(reader, values, sizeof(ushort));
+        return values;
+    }
+
+    /// <summary>Reads an array of little-endian primitives at once.</summary>
+    private static void ReadBulk<T>(BinaryReader reader, T[] values, int size)
+        where T : struct
+    {
+        if (values.Length == 0)
         {
-            values[i] = reader.ReadUInt16();
+            return;
         }
 
-        return values;
+        var bytes = reader.ReadBytes(values.Length * size);
+        if (bytes.Length != values.Length * size)
+        {
+            throw new EndOfStreamException();
+        }
+
+        if (!BitConverter.IsLittleEndian)
+        {
+            for (var i = 0; i < bytes.Length; i += size)
+            {
+                Array.Reverse(bytes, i, size);
+            }
+        }
+
+        Buffer.BlockCopy(bytes, 0, values, 0, bytes.Length);
     }
 
     private static void WriteInts(BinaryWriter writer, int[] values)
@@ -212,11 +236,7 @@ public sealed partial class Language
     private static int[] ReadInts(BinaryReader reader)
     {
         var values = new int[reader.ReadInt32()];
-        for (var i = 0; i < values.Length; i++)
-        {
-            values[i] = reader.ReadInt32();
-        }
-
+        ReadBulk(reader, values, sizeof(int));
         return values;
     }
 

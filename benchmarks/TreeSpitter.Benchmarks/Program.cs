@@ -90,7 +90,7 @@ if (args.Length > 0 && args[0] == "quick")
         foreach (var size in sizes)
         {
             var benchmark = new NativeComparisonBenchmarks { Language = language, Size = size };
-            if (Environment.GetEnvironmentVariable("NO_CHECK") is null) { benchmark.Setup(); } else { try { benchmark.Setup(); } catch (InvalidOperationException) { } }
+            benchmark.Setup();
             var native = Measure(benchmark.Native);
             var vm = Measure(benchmark.Vm);
             var generated = Measure(benchmark.Generated);

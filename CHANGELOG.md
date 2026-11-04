@@ -15,5 +15,11 @@ releases are `v*.*.*` tags, see [docs/release.md](docs/release.md).
 - `Parser`: a port of the tree-sitter GLR parser, with its error recovery (`ERROR` and `MISSING` nodes), on UTF-8
   input. `SyntaxTree` and `SyntaxNode` expose the tree-sitter node model: named and anonymous nodes, aliases, fields,
   extras, byte offsets, points and S-expressions.
+- `Language.Save` and `Language.Load`: the binary format of the compiled tables.
+- `CSharpGenerator` and the `TreeSpitter.Generators` source generator: `[GeneratedLanguage("grammar.json")]` classes
+  get precompiled parsers, with the tables embedded and the lexer compiled to C#.
+- `TreeSpitter.Languages`: precompiled JSON, Go, Java and C parsers.
+- Performance: in-place reductions on the single-version path, pooled tree memory (`SyntaxTree.Dispose`), vectorized
+  skipping of self-looping lexer states, and a hash table for the keywords.
 - `Corpus`: reads and runs tree-sitter corpus tests (`test/corpus/*.txt`).
-- `tree-spitter` command line tool (`grammar`, `info`, `parse`, `test`).
+- `tree-spitter` command line tool (`grammar`, `info`, `compile`, `generate`, `parse`, `test`).

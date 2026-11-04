@@ -76,7 +76,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        for project in src/TreeSpitter/TreeSpitter.csproj src/TreeSpitter.Cli/TreeSpitter.Cli.csproj; do
+        for project in src/TreeSpitter/TreeSpitter.csproj src/TreeSpitter.Cli/TreeSpitter.Cli.csproj src/TreeSpitter.Generators/TreeSpitter.Generators.csproj src/TreeSpitter.Languages/TreeSpitter.Languages.csproj; do
           dotnet pack "$project" --output artifacts --configuration Release --no-build -p:Version=${{ steps.release.outputs.version }} -p:ContinuousIntegrationBuild=True
         done
 

@@ -10,6 +10,8 @@
     <PackageTags>tree-sitter;parser;source-generator;roslyn</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <DevelopmentDependency>true</DevelopmentDependency>
+    <!-- The package only has the analyzer: no symbols package. -->
+    <IncludeSymbols>false</IncludeSymbols>
     <NoWarn>$(NoWarn);NU5128</NoWarn>
     <DefineConstants>$(DefineConstants);TREESPITTER_GENERATOR</DefineConstants>
   </PropertyGroup>

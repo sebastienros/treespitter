@@ -46,6 +46,20 @@ internal static class Grammars
         _ => throw new ArgumentException($"No generated language '{name}'.", nameof(name)),
     };
 
+    /// <summary>The root of the repository.</summary>
+    public static string Root()
+    {
+        for (var directory = AppContext.BaseDirectory; directory is not null; directory = Directory.GetParent(directory)?.FullName)
+        {
+            if (File.Exists(System.IO.Path.Combine(directory, "TreeSpitter.slnx")))
+            {
+                return directory;
+            }
+        }
+
+        throw new InvalidOperationException("The repository root wasn't found.");
+    }
+
     public static string Path(string name)
     {
         // The benchmarks run from bin/, the grammars are in the repository

@@ -30,6 +30,12 @@ internal static class Program
                 case "parse" when args.Length >= 3:
                     return Parse(args[1], args[2], args.Contains("--time"));
 
+                case "compile":
+                    return Compile(args[1], Option(args, "-o") ?? Path.ChangeExtension(Path.GetFileName(args[1]), ".tsl"));
+
+                case "generate":
+                    return Generate(args[1], Option(args, "-o"), Option(args, "--namespace"), Option(args, "--class"));
+
                 case "test" when args.Length >= 3:
                     return Test(args[1], args[2], args.Contains("-v") || args.Contains("--verbose"), Option(args, "--filter"));
 
@@ -87,6 +93,55 @@ internal static class Program
         }
 
         return tree.HasError ? 1 : 0;
+    }
+
+    private static int Compile(string grammarPath, string output)
+    {
+        var language = LoadLanguage(grammarPath);
+        File.WriteAllBytes(output, language.Save());
+        Console.Error.WriteLine($"wrote {output}: {language.StateCount} parse states, {language.LexStateCount} lex states");
+        return 0;
+    }
+
+    private static int Generate(string grammarPath, string? output, string? ns, string? className)
+    {
+        var language = grammarPath.EndsWith(".tsl", StringComparison.OrdinalIgnoreCase) ? Language.Load(File.ReadAllBytes(grammarPath)) : LoadLanguage(grammarPath);
+        var source = TreeSpitter.CodeGen.CSharpGenerator.Generate(language, new TreeSpitter.CodeGen.CSharpGeneratorOptions
+        {
+            Namespace = ns,
+            ClassName = className ?? ToClassName(language.Name) + "Language",
+        });
+
+        if (output is null)
+        {
+            Console.Write(source);
+        }
+        else
+        {
+            File.WriteAllText(output, source);
+            Console.Error.WriteLine($"wrote {output}");
+        }
+
+        return 0;
+    }
+
+    private static string ToClassName(string name)
+    {
+        var builder = new StringBuilder();
+        var upper = true;
+        foreach (var c in name)
+        {
+            if (!char.IsLetterOrDigit(c))
+            {
+                upper = true;
+                continue;
+            }
+
+            builder.Append(upper ? char.ToUpperInvariant(c) : c);
+            upper = false;
+        }
+
+        return builder.ToString();
     }
 
     private static int Info(string grammarPath)
@@ -152,6 +207,9 @@ internal static class Program
             usage:
               tree-spitter grammar <grammar.js|grammar.json>            prints the grammar as JSON (like src/grammar.json)
               tree-spitter info <grammar>                               prints the size of the generated tables
+              tree-spitter compile <grammar> [-o file.tsl]              writes the compiled tables (Language.Save)
+              tree-spitter generate <grammar|file.tsl> [-o file.cs] [--namespace ns] [--class name]
+                                                                        generates the C# source of a precompiled parser
               tree-spitter parse <grammar> <file|-> [--time]            prints the syntax tree
               tree-spitter test <grammar> <corpus> [-v] [--filter text] runs tree-sitter corpus tests
             """);

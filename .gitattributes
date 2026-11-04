@@ -5,3 +5,4 @@
 
 # The vendored tree-sitter grammars and corpora are kept byte-exact (the C corpus tests CRLF input).
 /grammars/** -text
+/benchmarks/TreeSpitter.Benchmarks/Inputs/** -text
