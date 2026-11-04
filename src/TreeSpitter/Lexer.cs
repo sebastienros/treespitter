@@ -161,6 +161,7 @@ public readonly struct TableLexFunction : ILexFunction
         var accept = table.Accept;
         var eofTarget = table.EofTarget;
         var ascii = table.Ascii;
+        var loops = table.SelfLoops;
 
         while (true)
         {
@@ -190,6 +191,17 @@ public readonly struct TableLexFunction : ILexFunction
             if (c < 128)
             {
                 next = ascii[(state << 7) + c] - 1;
+                if ((next & ~LexAutomaton.SkipFlag) == state && loops[state] is { } loop)
+                {
+                    // A run of bytes looping on the state: skip it at once, then continue in the state
+                    position = loop.SkipRun(input, position + 1, length);
+                    if (loop.Skip)
+                    {
+                        tokenStart = position;
+                    }
+
+                    continue;
+                }
             }
             else
             {

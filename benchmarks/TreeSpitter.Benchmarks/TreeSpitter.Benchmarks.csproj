@@ -3,6 +3,7 @@
     <OutputType>Exe</OutputType>
     <!-- TreeSitter.DotNet isn't strong-named, and the benchmarks aren't shipped. -->
     <SignAssembly>false</SignAssembly>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" />

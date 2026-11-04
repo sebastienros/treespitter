@@ -195,6 +195,27 @@ public sealed partial class Language
 
     internal ushort[] SupertypeSymbols { get; set; } = [];
 
+    private KeywordTable? _keywords;
+    private bool _keywordsCreated;
+
+    /// <summary>Disables the keyword table, to measure it.</summary>
+    internal static bool DisableKeywordTable { get; set; }
+
+    /// <summary>The keywords as a hash table, when the keyword automaton accepts a finite set of strings.</summary>
+    internal KeywordTable? Keywords
+    {
+        get
+        {
+            if (!Volatile.Read(ref _keywordsCreated))
+            {
+                _keywords = DisableKeywordTable ? null : KeywordTable.Create(KeywordLexTable);
+                Volatile.Write(ref _keywordsCreated, true);
+            }
+
+            return _keywords;
+        }
+    }
+
     /// <summary>The lexer of the tokens.</summary>
     internal LexAutomaton MainLexTable { get; set; } = LexAutomaton.Empty;
 

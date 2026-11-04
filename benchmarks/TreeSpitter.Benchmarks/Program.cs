@@ -26,6 +26,60 @@ if (args.Length > 0 && args[0] == "profile")
     return;
 }
 
+if (args.Length > 0 && args[0] == "file")
+{
+    // file <language> <path> [noloops]: times the parsers on a file
+    if (args.Length > 3 && args[3] == "noloops")
+    {
+        typeof(TreeSpitter.Parser).Assembly.GetType("TreeSpitter.LexAutomaton")!
+            .GetProperty("MinimumSelfLoopSize", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(null, 1000);
+    }
+
+    var bytes = File.ReadAllBytes(args[2]);
+    var text = System.Text.Encoding.UTF8.GetString(bytes);
+    var parser = new TreeSpitter.Parser(Grammars.Language(args[1]));
+    using var nativeLanguage = new TreeSitter.Language(args[1]);
+    using var nativeParser = new TreeSitter.Parser(nativeLanguage);
+    using var utf8Parser = new NativeUtf8Parser(args[1]);
+    using (var nativeTree = nativeParser.Parse(text))
+    using (var tree = parser.Parse(bytes))
+    {
+        var utf16 = nativeTree!.RootNode.ToString();
+        var expected = utf8Parser.ToSExpression(bytes);
+        Console.WriteLine(utf16 == expected ? "native UTF-16 and UTF-8 trees are the same" : "native UTF-16 and UTF-8 trees differ");
+        var actual = tree.ToSExpression();
+        if (expected == actual)
+        {
+            Console.WriteLine("same trees");
+        }
+        else
+        {
+            var index = 0;
+            while (index < Math.Min(expected.Length, actual.Length) && expected[index] == actual[index])
+            {
+                index++;
+            }
+
+            var start = Math.Max(0, index - 300);
+            Console.WriteLine($"DIFFERENT TREES at {index}:\n  native: ...{expected.Substring(start, Math.Min(500, expected.Length - start))}\n  ours:   ...{actual.Substring(start, Math.Min(500, actual.Length - start))}");
+        }
+    }
+
+    var native = Measure(() => { using var tree = nativeParser.Parse(text); });
+    var nativeUtf8 = Measure(() => utf8Parser.Parse(bytes));
+    var vm = Measure(() => { using var tree = parser.Parse(bytes); });
+    Console.WriteLine($"{args[1]} {bytes.Length} bytes: native {native:F3} ms   native UTF-8 {nativeUtf8:F3} ms   vm {vm:F3} ms ({vm / nativeUtf8:F2} of UTF-8)");
+    return;
+}
+
+if (Environment.GetEnvironmentVariable("NO_KEYWORD_TABLE") is not null)
+{
+    typeof(TreeSpitter.Parser).Assembly.GetType("TreeSpitter.Language")!
+        .GetProperty("DisableKeywordTable", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!
+        .SetValue(null, true);
+}
+
 if (args.Length > 0 && args[0] == "quick")
 {
     // A quick comparison without BenchmarkDotNet, to iterate on optimizations: checks the trees and times the parsers
@@ -36,7 +90,7 @@ if (args.Length > 0 && args[0] == "quick")
         foreach (var size in sizes)
         {
             var benchmark = new NativeComparisonBenchmarks { Language = language, Size = size };
-            benchmark.Setup();
+            if (Environment.GetEnvironmentVariable("NO_CHECK") is null) { benchmark.Setup(); } else { try { benchmark.Setup(); } catch (InvalidOperationException) { } }
             var native = Measure(benchmark.Native);
             var vm = Measure(benchmark.Vm);
             var generated = Measure(benchmark.Generated);

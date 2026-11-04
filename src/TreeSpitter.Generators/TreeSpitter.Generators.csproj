@@ -23,7 +23,7 @@
     <Compile Include="../TreeSpitter/Generation/*.cs" LinkBase="Linked/Generation" />
     <Compile Include="../TreeSpitter/Lexing/*.cs" LinkBase="Linked/Lexing" />
     <Compile Include="../TreeSpitter/CodeGen/*.cs" LinkBase="Linked/CodeGen" />
-    <Compile Include="../TreeSpitter/Language.cs;../TreeSpitter/LanguageSerializer.cs;../TreeSpitter/LexAutomaton.cs" LinkBase="Linked" />
+    <Compile Include="../TreeSpitter/Language.cs;../TreeSpitter/LanguageSerializer.cs;../TreeSpitter/LexAutomaton.cs;../TreeSpitter/KeywordTable.cs" LinkBase="Linked" />
   </ItemGroup>
   <ItemGroup>
     <AdditionalFiles Include="AnalyzerReleases.Shipped.md;AnalyzerReleases.Unshipped.md" />

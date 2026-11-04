@@ -33,7 +33,22 @@ internal sealed class LexAutomaton
                 }
             }
         }
+
+        SelfLoops = new ByteRun?[accept.Length];
+        for (var state = 0; state < accept.Length; state++)
+        {
+            SelfLoops[state] = ByteRun.Create(Ascii, state, MinimumSelfLoopSize);
+        }
     }
+
+    /// <summary>The smallest set of looping bytes worth a vectorized search.</summary>
+    internal static int MinimumSelfLoopSize { get; set; } = 1;
+
+    /// <summary>
+    /// For each state, the ASCII bytes whose transition loops back to the state, or null: runs of these bytes (white
+    /// space, the contents of strings and comments, identifiers) are skipped with a vectorized search.
+    /// </summary>
+    internal ByteRun?[] SelfLoops { get; }
 
     public int StateCount => Accept.Length;
 
@@ -92,5 +107,118 @@ internal sealed class LexAutomaton
         }
 
         return -1;
+    }
+}
+
+/// <summary>
+/// A set of ASCII bytes on which a lex state loops to itself, with the skip flag of the transitions: lexers skip the
+/// runs of these bytes (white space, the contents of strings and comments, identifiers) at once, with a vectorized
+/// search for the long runs. Used by the table lexer and the generated lexers.
+/// </summary>
+[System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Advanced)]
+public sealed class ByteRun
+{
+    /// <summary>The number of bytes checked one by one before switching to a vectorized search.</summary>
+    internal const int ScalarPrefix = 16;
+
+    private readonly bool[] _table;
+#if NET
+    private readonly System.Buffers.SearchValues<byte> _values;
+#endif
+
+    /// <summary>Creates a set of ASCII bytes.</summary>
+    public ByteRun(byte[] bytes, bool skip)
+    {
+        _table = new bool[256];
+        foreach (var b in bytes)
+        {
+            _table[b] = true;
+        }
+
+#if NET
+        _values = System.Buffers.SearchValues.Create(bytes);
+#endif
+        Skip = skip;
+        Count = bytes.Length;
+    }
+
+    /// <summary>Whether the transitions skip the bytes (separators).</summary>
+    public bool Skip { get; }
+
+    /// <summary>The number of bytes of the set.</summary>
+    public int Count { get; }
+
+    /// <summary>Whether a code point is in the set.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool Contains(int c) => (uint)c < 128 && _table[c];
+
+    internal static ByteRun? Create(int[] ascii, int state, int minimumSize)
+    {
+        var looping = new List<byte>();
+        var skipping = new List<byte>();
+        for (var c = 0; c < 128; c++)
+        {
+            var target = ascii[state * 128 + c] - 1;
+            if (target < 0)
+            {
+                continue;
+            }
+
+            if (target == state)
+            {
+                looping.Add((byte)c);
+            }
+            else if (target == (state | LexAutomaton.SkipFlag))
+            {
+                skipping.Add((byte)c);
+            }
+        }
+
+        // A state can't loop on some bytes and skip others in one run
+        if (looping.Count > 0 && skipping.Count > 0)
+        {
+            return null;
+        }
+
+        var bytes = looping.Count > 0 ? looping : skipping;
+        return bytes.Count >= minimumSize ? new ByteRun([.. bytes], skipping.Count > 0) : null;
+    }
+
+    /// <summary>
+    /// The position of the first byte at or after <paramref name="position"/> that isn't in the set: the first bytes
+    /// are checked one by one, the rest of long runs with a vectorized search.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public int SkipRun(byte[] input, int position, int length)
+    {
+        var table = _table;
+        var end = Math.Min(length, position + ScalarPrefix);
+        while (position < end)
+        {
+            if (!table[input[position]])
+            {
+                return position;
+            }
+
+            position++;
+        }
+
+        return position < length ? SkipLongRun(input, position, length) : position;
+    }
+
+    private int SkipLongRun(byte[] input, int position, int length)
+    {
+#if NET
+        var index = new ReadOnlySpan<byte>(input, position, length - position).IndexOfAnyExcept(_values);
+        return index < 0 ? length : position + index;
+#else
+        var table = _table;
+        while (position < length && table[input[position]])
+        {
+            position++;
+        }
+
+        return position;
+#endif
     }
 }

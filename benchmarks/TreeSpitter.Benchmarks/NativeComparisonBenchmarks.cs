@@ -6,8 +6,8 @@ using NativeParser = TreeSitter.Parser;
 namespace TreeSpitter.Benchmarks;
 
 /// <summary>
-/// TreeSpitter against the native tree-sitter parsers of the TreeSitter.DotNet package, on the same inputs. The setup
-/// checks that both produce the same tree. The memory columns only count managed allocations: the native trees are
+/// TreeSpitter against the native tree-sitter parsers of the TreeSitter.DotNet package, on the same inputs: through the
+/// binding (which parses strings as UTF-16) and directly on the UTF-8 input. The setup checks that the trees are the same. The memory columns only count managed allocations: the native trees are
 /// allocated by tree-sitter.
 /// </summary>
 [MemoryDiagnoser]
@@ -18,6 +18,7 @@ public class NativeComparisonBenchmarks
     private Parser _generatedParser = null!;
     private NativeLanguage _nativeLanguage = null!;
     private NativeParser _nativeParser = null!;
+    private NativeUtf8Parser _nativeUtf8Parser = null!;
     private string _text = "";
     private byte[] _utf8 = [];
 
@@ -42,9 +43,10 @@ public class NativeComparisonBenchmarks
         _generatedParser = new Parser(Grammars.GeneratedLanguage(Language));
         _nativeLanguage = new NativeLanguage(Language);
         _nativeParser = new NativeParser(_nativeLanguage);
+        _nativeUtf8Parser = new NativeUtf8Parser(Language);
 
-        using var nativeTree = _nativeParser.Parse(_text) ?? throw new InvalidOperationException("The native parser failed.");
-        var expected = nativeTree.RootNode.ToString();
+        // tree-sitter counts the skipped bytes in its error costs: the trees match the native parser on the same UTF-8 input
+        var expected = _nativeUtf8Parser.ToSExpression(_utf8);
         foreach (var actual in new[] { _parser.Parse(_utf8).ToSExpression(), _generatedParser.Parse(_utf8).ToSExpression() })
         {
             Check(expected, actual);
@@ -72,6 +74,7 @@ public class NativeComparisonBenchmarks
     public void Cleanup()
     {
         _nativeParser.Dispose();
+        _nativeUtf8Parser.Dispose();
         _nativeLanguage.Dispose();
     }
 
@@ -81,6 +84,10 @@ public class NativeComparisonBenchmarks
     {
         using var tree = _nativeParser.Parse(_text);
     }
+
+    /// <summary>Parses the UTF-8 input with the native tree-sitter parser.</summary>
+    [Benchmark]
+    public void NativeUtf8() => _nativeUtf8Parser.Parse(_utf8);
 
     /// <summary>Parses the UTF-8 input with the TreeSpitter virtual machine, and disposes the tree like the native benchmark.</summary>
     [Benchmark]

@@ -365,6 +365,33 @@ public static class CSharpGenerator
 
             writer.Line($"case {state}:");
             writer.Open();
+            if (automaton.SelfLoops[state] is { } loop)
+            {
+                var name = $"{prefix}Loop{state}";
+                var bytes = new List<int>();
+                for (var c = 0; c < 128; c++)
+                {
+                    var target = automaton.Ascii[state * 128 + c] - 1;
+                    if (target >= 0 && (target & ~LexAutomaton.SkipFlag) == state)
+                    {
+                        bytes.Add(c);
+                    }
+                }
+
+                tables.Append(new string(' ', writer.Indent * 4))
+                    .Append($"private static readonly global::TreeSpitter.ByteRun {name} = new global::TreeSpitter.ByteRun(new byte[] {{ {string.Join(", ", bytes)} }}, {(loop.Skip ? "true" : "false")});\n");
+                writer.Line($"if ({name}.Contains(c))");
+                writer.Open();
+                writer.Line($"position = {name}.SkipRun(input, position + 1, length);");
+                if (loop.Skip)
+                {
+                    writer.Line("tokenStart = position;");
+                }
+
+                writer.Line("continue;");
+                writer.Close();
+            }
+
             writer.Line("switch (c)");
             writer.Open();
             foreach (var (target, ranges) in groups)
