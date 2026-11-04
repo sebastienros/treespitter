@@ -64,6 +64,19 @@ public sealed class LanguageTests
     }
 
     [Fact]
+    public void InvalidUtf8MatchesTheNegatedCharacterClassesLikeInTreeSitter()
+    {
+        // tree-sitter's lexers render the transitions on sets with the last code point as negated conditions, which the
+        // lookahead of invalid UTF-8 (-1) satisfies, but not the large sets of identifiers: the trees of the native parser
+        byte[] input = [.. "int a"u8, 0xE5, .. "b; // c"u8, 0xE5, .. "d\nchar *s = \"e"u8, 0xE5, .. "f\";\n"u8];
+        const string expected = "(translation_unit (declaration type: (primitive_type) declarator: (identifier) (ERROR (UNEXPECTED INVALID) (identifier))) (comment) " +
+            "(declaration type: (primitive_type) declarator: (init_declarator declarator: (pointer_declarator declarator: (identifier)) value: (string_literal (string_content)))))";
+
+        Assert.Equal(expected, new Parser(Fixtures.GeneratedLanguage("c")).Parse(input).ToSExpression());
+        Assert.Equal(expected, new Parser(Fixtures.Language("c")).Parse(input).ToSExpression());
+    }
+
+    [Fact]
     public void TheGeneratorEmitsAClassWithTheLanguage()
     {
         var source = CSharpGenerator.Generate(Fixtures.Language("json"), new CSharpGeneratorOptions { Namespace = "Demo", ClassName = "JsonParser" });

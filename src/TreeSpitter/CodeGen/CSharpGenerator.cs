@@ -311,10 +311,6 @@ public static class CSharpGenerator
             writer.Line("if (c >= 0x80)");
             writer.Open();
             writer.Line("c = global::TreeSpitter.Lexer.Decode(input, position, length, out size);");
-            writer.Line("if (c < 0)");
-            writer.Open();
-            writer.Line("goto done;");
-            writer.Close();
             writer.Close();
             writer.Line("switch (state)");
             writer.Open();

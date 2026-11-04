@@ -3,13 +3,20 @@ namespace TreeSpitter.Generation;
 // A port of tree-sitter's build_tables.rs, build_tables/minimize_parse_table.rs, build_tables/build_lex_table.rs and
 // dedup.rs.
 
-internal sealed class Tables(ParseTable parseTable, LexTable mainLexTable, LexTable keywordLexTable)
+internal sealed class Tables(ParseTable parseTable, LexTable mainLexTable, LexTable keywordLexTable, List<CharacterSet> largeCharacterSets)
 {
     public ParseTable ParseTable { get; } = parseTable;
 
     public LexTable MainLexTable { get; } = mainLexTable;
 
     public LexTable KeywordLexTable { get; } = keywordLexTable;
+
+    /// <summary>
+    /// The large character sets of the tokens, tree-sitter's <c>large_character_sets</c>: render.rs looks them up with
+    /// <c>set_contains</c>, which changes the conditions of the transitions on invalid UTF-8 (see
+    /// <c>LanguageBuilder.DecodeErrorTransition</c>).
+    /// </summary>
+    public List<CharacterSet> LargeCharacterSets { get; } = largeCharacterSets;
 }
 
 internal static class TableBuilder
@@ -28,7 +35,7 @@ internal static class TableBuilder
         PopulateErrorState(parseTable, syntaxGrammar, lexicalGrammar, coincidentTokenIndex, tokenConflictMap, keywords);
         PopulateUsedSymbols(parseTable, syntaxGrammar, lexicalGrammar);
         new Minimizer(parseTable, syntaxGrammar, lexicalGrammar, simpleAliases, tokenConflictMap, keywords).Minimize();
-        var (mainLexTable, keywordLexTable) = LexTableBuilder.BuildLexTables(parseTable, syntaxGrammar, lexicalGrammar, keywords, coincidentTokenIndex, tokenConflictMap);
+        var (mainLexTable, keywordLexTable, largeCharacterSets) = LexTableBuilder.BuildLexTables(parseTable, syntaxGrammar, lexicalGrammar, keywords, coincidentTokenIndex, tokenConflictMap);
         PopulateExternalLexStates(parseTable, syntaxGrammar);
         MarkFragileTokens(parseTable, lexicalGrammar, tokenConflictMap);
         if (parseTable.States.Count > ushort.MaxValue)
@@ -36,7 +43,7 @@ internal static class TableBuilder
             throw new GrammarException($"State count `{parseTable.States.Count}` exceeds the max value {ushort.MaxValue}.");
         }
 
-        return new Tables(parseTable, mainLexTable, keywordLexTable);
+        return new Tables(parseTable, mainLexTable, keywordLexTable, largeCharacterSets);
     }
 
     private static List<TokenSet> GetFollowingTokens(SyntaxGrammar syntaxGrammar, LexicalGrammar lexicalGrammar, InlinedProductionMap inlines, ParseItemSetBuilder builder)
@@ -875,7 +882,10 @@ internal sealed class LexTableBuilder
 
     public LexTable Table { get; private set; } = new();
 
-    public static (LexTable Main, LexTable Keyword) BuildLexTables(ParseTable parseTable, SyntaxGrammar syntaxGrammar, LexicalGrammar lexicalGrammar, TokenSet keywords, CoincidentTokenIndex coincidentTokenIndex, TokenConflictMap tokenConflictMap)
+    /// <summary>The number of ranges from which a character set is large, tree-sitter's <c>LARGE_CHARACTER_RANGE_COUNT</c>.</summary>
+    public const int LargeCharacterRangeCount = 8;
+
+    public static (LexTable Main, LexTable Keyword, List<CharacterSet> LargeCharacterSets) BuildLexTables(ParseTable parseTable, SyntaxGrammar syntaxGrammar, LexicalGrammar lexicalGrammar, TokenSet keywords, CoincidentTokenIndex coincidentTokenIndex, TokenConflictMap tokenConflictMap)
     {
         var keywordLexTable = new LexTable();
         if (syntaxGrammar.WordToken is not null)
@@ -942,7 +952,45 @@ internal sealed class LexTableBuilder
         var mainLexTable = builder.Table;
         MinimizeLexTable(mainLexTable, parseTable);
         SortStates(mainLexTable, parseTable);
-        return (mainLexTable, keywordLexTable);
+
+        var largeCharacterSets = new List<CharacterSet>();
+        for (var variableIndex = 0; variableIndex < lexicalGrammar.Variables.Count; variableIndex++)
+        {
+            var symbol = Symbol.Terminal(variableIndex);
+            builder.Reset();
+            builder.AddStateForTokens(TokenSet.Of(symbol));
+            foreach (var state in builder.Table.States)
+            {
+                var characters = new CharacterSet();
+                foreach (var (chars, action) in state.AdvanceActions)
+                {
+                    if (action.InMainToken)
+                    {
+                        characters.Add(chars);
+                        continue;
+                    }
+
+                    if (chars.RangeCount > LargeCharacterRangeCount && !largeCharacterSets.Any(set => set.Equals(chars)))
+                    {
+                        largeCharacterSets.Add(chars.Clone());
+                    }
+                }
+
+                if (characters.RangeCount > LargeCharacterRangeCount && !largeCharacterSets.Any(set => set.Equals(characters)))
+                {
+                    largeCharacterSets.Add(characters);
+                }
+            }
+        }
+
+        return (mainLexTable, keywordLexTable, largeCharacterSets);
+    }
+
+    private void Reset()
+    {
+        Table = new LexTable();
+        _stateQueue.Clear();
+        _stateIdsByNfaStateSet.Clear();
     }
 
     private int AddStateForTokens(TokenSet tokens)

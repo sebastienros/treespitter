@@ -182,7 +182,7 @@ internal sealed class KeywordTable
 
             var low = automaton.RangeStart[i];
             var high = automaton.RangeEnd[i];
-            if (high - low > 4 || low is >= 0xD800 and <= 0xDFFF || high > 0x10FFFF)
+            if (high - low > 4 || low < 0 || low is >= 0xD800 and <= 0xDFFF || high > 0x10FFFF)
             {
                 return false;
             }

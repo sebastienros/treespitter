@@ -288,7 +288,7 @@ public readonly struct TableLexFunction : ILexFunction
             else
             {
                 c = Lexer.Decode(input, position, length, out size);
-                next = c < 0 ? -1 : table.Transition(state, c);
+                next = table.Transition(state, c);
             }
 
             if (next < 0)
