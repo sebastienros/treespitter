@@ -17,6 +17,9 @@
   <ItemGroup>
     <!-- The grammars, compiled by the source generator. -->
     <AdditionalFiles Include="../../grammars/*/grammar.json" LinkBase="Grammars" />
+    <!-- A development build can generate only some grammars, to build faster: TreeSpitterGrammars=json,ruby dotnet build -->
+    <CompilerVisibleProperty Include="TreeSpitterGrammars" />
+    <AssemblyMetadata Include="TreeSpitterGrammars" Value="$(TreeSpitterGrammars)" Condition="'$(TreeSpitterGrammars)' != ''" />
     <None Include="../../README.md" Pack="true" PackagePath="/" />
     <None Include="../../THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="licenses/THIRD-PARTY-NOTICES.txt" />
   </ItemGroup>

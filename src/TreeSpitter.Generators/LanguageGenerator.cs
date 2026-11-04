@@ -53,7 +53,33 @@ public sealed class LanguageGenerator : IIncrementalGenerator
             .Collect()
             .Select(static (files, _) => new EquatableArray<GrammarFile>(files));
 
-        context.RegisterSourceOutput(targets.Combine(grammars), static (output, pair) => Generate(output, pair.Left, pair.Right));
+        // The grammars to generate, for the development builds of a few grammars: all when the property isn't set
+        var selection = context.AnalyzerConfigOptionsProvider.Select(static (options, _) =>
+            options.GlobalOptions.TryGetValue("build_property.TreeSpitterGrammars", out var value) ? value : "");
+
+        context.RegisterSourceOutput(targets.Combine(grammars).Combine(selection), static (output, pair) =>
+        {
+            if (IsSelected(pair.Left.Left.GrammarPath, pair.Right))
+            {
+                Generate(output, pair.Left.Left, pair.Left.Right);
+            }
+        });
+    }
+
+    /// <summary>
+    /// Whether a grammar is in the names of the <c>TreeSpitterGrammars</c> build property, separated by commas or
+    /// semicolons (the name of the directory of its grammar.json), or the property is empty.
+    /// </summary>
+    private static bool IsSelected(string grammarPath, string selection)
+    {
+        if (string.IsNullOrWhiteSpace(selection))
+        {
+            return true;
+        }
+
+        var segments = Normalize(grammarPath).TrimStart('.', '/').Split('/');
+        var name = segments.Length > 1 ? segments[segments.Length - 2] : "";
+        return selection.Split(',', ';').Any(n => n.Trim() == name);
     }
 
     private static string Normalize(string path) => path.Replace('\\', '/');
