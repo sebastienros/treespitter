@@ -31,6 +31,11 @@ internal static class TableBuilder
         var (mainLexTable, keywordLexTable) = LexTableBuilder.BuildLexTables(parseTable, syntaxGrammar, lexicalGrammar, keywords, coincidentTokenIndex, tokenConflictMap);
         PopulateExternalLexStates(parseTable, syntaxGrammar);
         MarkFragileTokens(parseTable, lexicalGrammar, tokenConflictMap);
+        if (parseTable.States.Count > ushort.MaxValue)
+        {
+            throw new GrammarException($"State count `{parseTable.States.Count}` exceeds the max value {ushort.MaxValue}.");
+        }
+
         return new Tables(parseTable, mainLexTable, keywordLexTable);
     }
 
@@ -171,7 +176,7 @@ internal static class TableBuilder
             if (terminalUsages[i])
             {
                 // The word token gets a low symbol id
-                if (syntaxGrammar.WordToken is { } word && word.Index == i)
+                if (syntaxGrammar.WordToken == Symbol.Terminal(i))
                 {
                     parseTable.Symbols.Insert(1, Symbol.Terminal(i));
                 }
@@ -240,7 +245,8 @@ internal static class TableBuilder
 
     private static TokenSet IdentifyKeywords(LexicalGrammar lexicalGrammar, ParseTable parseTable, Symbol? wordToken, TokenConflictMap tokenConflictMap, CoincidentTokenIndex coincidentTokenIndex)
     {
-        if (wordToken is not { } word)
+        // An external word token has no lexical rule to compare with the keywords
+        if (wordToken is not { IsTerminal: true } word)
         {
             return new TokenSet();
         }

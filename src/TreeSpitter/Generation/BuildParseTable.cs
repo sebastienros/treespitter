@@ -205,8 +205,12 @@ internal sealed class ParseTableBuilder
                         }
                         else if (comparison == 0)
                         {
-                            tableEntry.Actions.Add(action);
-                            lookaheadsWithConflicts.Insert(lookahead);
+                            // Two items that reduce identically build the same tree: there is nothing to resolve
+                            if (!tableEntry.Actions.Contains(action))
+                            {
+                                tableEntry.Actions.Add(action);
+                                lookaheadsWithConflicts.Insert(lookahead);
+                            }
                         }
                         else
                         {
@@ -386,6 +390,7 @@ internal sealed class ParseTableBuilder
             }
 
             var shiftIsLess = false;
+            var shiftIsEqual = false;
             var shiftIsMore = false;
             foreach (var p in shiftPrecedence)
             {
@@ -398,6 +403,10 @@ internal sealed class ParseTableBuilder
                 {
                     shiftIsLess = true;
                 }
+                else
+                {
+                    shiftIsEqual = true;
+                }
             }
 
             if (shiftIsMore && !shiftIsLess)
@@ -406,8 +415,17 @@ internal sealed class ParseTableBuilder
             }
             else if (shiftIsLess && !shiftIsMore)
             {
-                entry.Actions.RemoveAt(entry.Actions.Count - 1);
-                conflictingItems.RemoveWhere(i => !i.IsDone);
+                // When a shift ties the purely right associative reductions while another has a lower precedence, the
+                // right associativity wins: the lower precedence interpretation doesn't force a reduction
+                if (shiftIsEqual && !reductionInfo.HasLeftAssoc && !reductionInfo.HasNonAssoc && reductionInfo.HasRightAssoc)
+                {
+                    entry.Actions.RemoveRange(0, entry.Actions.Count - 1);
+                }
+                else
+                {
+                    entry.Actions.RemoveAt(entry.Actions.Count - 1);
+                    conflictingItems.RemoveWhere(i => !i.IsDone);
+                }
             }
             else if (!shiftIsLess && !shiftIsMore)
             {
