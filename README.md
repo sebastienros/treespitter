@@ -5,7 +5,8 @@
 TreeSpitter is a C# port of [tree-sitter](https://tree-sitter.github.io): `grammar.js` files are evaluated with
 [Jint](https://github.com/sebastienros/jint), compiled to LR(1) parse tables and lexer automata exactly like
 `tree-sitter generate` does, and run by a port of the tree-sitter GLR parser, error recovery included. Languages can
-also be precompiled by a source generator.
+also be precompiled by a source generator, which embeds their compiled tables in an assembly: they load in
+milliseconds instead of being compiled when the program runs (seconds, 40 s for C++).
 
 ```
 grammar.js ──Jint──▶ grammar AST ──▶ parse tables + lexer automata (bytecode) ──▶ GLR virtual machine ──▶ syntax tree
@@ -163,8 +164,11 @@ public static partial class MyLanguage;
 var tree = MyLanguage.CreateParser().Parse(source);
 ```
 
-The generated class embeds the tables (`Language.Save()`), loads them once (`Language.Load()`), and matches the keywords
-with code. `treespitter generate` writes the same source
+The generated class embeds the tables (`Language.Save()`), loads them once (`Language.Load()`, from the data of the
+assembly, without a copy), and matches the keywords with code. What it saves is the preparation of the language: the
+evaluation of `grammar.js` and the compilation of the tables (a few seconds for most grammars, up to 40 s and 2 GB of
+memory for C++, C# and Razor), done at build time. The parses are as fast as the ones of a language compiled at
+runtime, which runs the same tables. `treespitter generate` writes the same source
 to a file.
 
 A grammar with `externals` needs its external scanner (`src/scanner.c`) ported to an `IExternalScanner`: `Scan`,

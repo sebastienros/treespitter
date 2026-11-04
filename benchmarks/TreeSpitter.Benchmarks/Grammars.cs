@@ -30,6 +30,9 @@ internal static class Grammars
         var separator = Separators.GetValueOrDefault(name, "\n");
         var tests = Testing.Corpus.Load(System.IO.Path.Combine(Root(), "grammars", name, "corpus"))
             .Where(t => !t.Skip && t.Attributes.All(a => !a.StartsWith(":language(", StringComparison.Ordinal) || a == $":language({name})" || a == $":language({name.Replace('-', '_')})") && !t.Expected.Contains("ERROR") && !t.Expected.Contains("MISSING"))
+
+            // In Ruby, the text after __END__ is data: the rest of the input wouldn't be parsed
+            .Where(t => !t.Input.Contains("\n__END__"))
             .ToList();
         var block = new StringBuilder();
         foreach (var test in tests)
