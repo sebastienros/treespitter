@@ -1,0 +1,3 @@
+Vendored from https://github.com/tree-sitter/tree-sitter-ocaml at commit 3ef7c00b29e41e3a0c1d18e82ea37c64d72b93fc (MIT License, see LICENSE), the version of the native parser of TreeSitter.DotNet 1.3.0. The native parser is the `ocaml` grammar of the repository (implementations), the `ocaml-type` grammar is vendored in ../ocaml-type.
+
+Files: grammars/ocaml/grammar.js, grammars/ocaml/src/grammar.json (as grammar.json) and test/corpus/*.txt (as corpus/), without the ocaml_type and ocaml_interface subdirectories, whose tests are for the ocaml_type and ocaml_interface grammars (`:language(...)`). The external scanner, common/scanner.h (included by grammars/ocaml/src/scanner.c), is ported to C# in src/TreeSpitter.Languages/Scanners/OCamlScanner.cs.
