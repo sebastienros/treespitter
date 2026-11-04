@@ -11,7 +11,7 @@ packages by hand.
   workflow `publish.yml`, environment `release`. The workflow exchanges its GitHub OIDC token for a short-lived API key
   (`NuGet/login`); there is no long-lived nuget.org key in the repository.
 - GitHub: an environment named `release` (add required reviewers to make each release wait for an approval).
-- Feedz: the `FEEDZ_IO_API_KEY` repository secret, for previews. Without it the preview push is skipped.
+- Feedz: the `FEEDZ_IO_API_TOKEN` repository secret, for previews. Without it the preview push is skipped.
 
 ## Before tagging
 
