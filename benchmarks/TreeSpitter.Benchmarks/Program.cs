@@ -26,6 +26,43 @@ if (args.Length > 0 && args[0] == "profile")
     return;
 }
 
+if (args.Length > 0 && args[0] == "quick-incremental")
+{
+    // quick-incremental [languages]: times the incremental parses without BenchmarkDotNet
+    foreach (var language in args.Length > 1 ? args[1].Split(',') : Grammars.Names)
+    {
+        var benchmark = new IncrementalBenchmarks { Language = language, Size = 100_000 };
+        benchmark.Setup();
+        var nativeFull = Measure(benchmark.NativeFull);
+        var nativeIncremental = Measure(benchmark.NativeIncremental);
+        var full = Measure(benchmark.Full);
+        var incremental = Measure(benchmark.Incremental);
+        Console.WriteLine($"{language,-5}: native full {nativeFull,8:F3} ms   incremental {nativeIncremental,8:F3} ms   treespitter full {full,8:F3} ms   incremental {incremental,8:F3} ms ({incremental / nativeIncremental:F2} of native)");
+        benchmark.Cleanup();
+    }
+
+    return;
+}
+
+if (args.Length > 0 && args[0] == "incremental-trace")
+{
+    // incremental-trace <language> <corpus test> <trial>: logs the native parses of a trial of incremental-check
+    IncrementalCheck.Trace(args[1], args[2], int.Parse(args[3]));
+    return;
+}
+
+if (args.Length > 0 && args[0] == "incremental-check")
+{
+    // incremental-check [languages] [trials]: compares the incremental parses of random edits with the native ones
+    var trials = args.Length > 2 ? int.Parse(args[2]) : 6;
+    foreach (var language in args.Length > 1 ? args[1].Split(',') : Grammars.Names)
+    {
+        IncrementalCheck.Run(language, trials);
+    }
+
+    return;
+}
+
 if (args.Length > 0 && args[0] == "file")
 {
     // file <language> <path> [noloops]: times the parsers on a file

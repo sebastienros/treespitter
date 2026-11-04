@@ -23,37 +23,44 @@ public sealed class Parser
     /// <summary>Gets the language of the parser.</summary>
     public Language Language { get; }
 
-    /// <summary>Parses UTF-8 input.</summary>
-    public SyntaxTree Parse(byte[] utf8)
+    /// <summary>
+    /// Parses UTF-8 input. With an old tree, the tree of the previous version of the input edited with
+    /// <see cref="SyntaxTree.Edit"/>, the parse is incremental: the unchanged nodes of the old tree are reused, and
+    /// the new tree shares them. The old tree isn't changed.
+    /// </summary>
+    public SyntaxTree Parse(byte[] utf8, SyntaxTree? oldTree = null)
     {
         if (utf8 is null)
         {
             throw new ArgumentNullException(nameof(utf8));
         }
 
-        return _engine.Parse(utf8, utf8.Length);
+        return _engine.Parse(utf8, utf8.Length, oldTree);
     }
 
-    /// <summary>Parses UTF-8 input.</summary>
-    public SyntaxTree Parse(ReadOnlyMemory<byte> utf8)
+    /// <summary>Parses UTF-8 input, incrementally with an old tree, see <see cref="Parse(byte[], SyntaxTree?)"/>.</summary>
+    public SyntaxTree Parse(ReadOnlyMemory<byte> utf8, SyntaxTree? oldTree = null)
     {
         if (System.Runtime.InteropServices.MemoryMarshal.TryGetArray(utf8, out var segment) && segment.Offset == 0 && segment.Array is not null)
         {
-            return _engine.Parse(segment.Array, segment.Count);
+            return _engine.Parse(segment.Array, segment.Count, oldTree);
         }
 
-        return Parse(utf8.ToArray());
+        return Parse(utf8.ToArray(), oldTree);
     }
 
-    /// <summary>Parses a string, encoded to UTF-8 first: positions are byte offsets in the UTF-8 encoding.</summary>
-    public SyntaxTree Parse(string text)
+    /// <summary>
+    /// Parses a string, encoded to UTF-8 first: positions are byte offsets in the UTF-8 encoding. The parse is
+    /// incremental with an old tree, see <see cref="Parse(byte[], SyntaxTree?)"/>.
+    /// </summary>
+    public SyntaxTree Parse(string text, SyntaxTree? oldTree = null)
     {
         if (text is null)
         {
             throw new ArgumentNullException(nameof(text));
         }
 
-        return Parse(Encoding.UTF8.GetBytes(text));
+        return Parse(Encoding.UTF8.GetBytes(text), oldTree);
     }
 
     /// <summary>Parses a file, read as UTF-8.</summary>

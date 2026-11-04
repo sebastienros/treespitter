@@ -39,7 +39,16 @@ A port of `cli/generate/src` of tree-sitter v0.25.10:
 
 The behavior of tree-sitter is reproduced, quirks included: for example `x{2,}` matches exactly two `x`, like
 tree-sitter (the repetition of `expand_regex` for `{n,}` is disconnected from the loop), and `\w`, `\d`, `\s` are ASCII
-classes. Regular expressions are parsed by `RegexParser` (JavaScript syntax with the Rust extensions accepted by
+classes. Two quirks matter for the trees of erroneous inputs and the reuse of nodes:
+
+- When the minimization merges states, the end of the input is checked for conflicts with the tokens of the other state
+  as if it were the lexical token of index 0 (`token_conflicts` uses the index of `Symbol::end()`): this keeps states
+  apart, the parse tables have the states of tree-sitter (32, 1442, 1385 and 2015 for the JSON, Go, Java and C grammars).
+- At the end of the input the lookahead of tree-sitter's lexers is 0. The generated `ts_lex` matches it with the
+  transitions rendered in the `ADVANCE_MAP` of a lex state (its leading single-character transitions, when they have at
+  least 8 ranges), while the other conditions on `'\0'` check `!eof`. `LexAutomaton` takes such a transition as the
+  transition at the end of the input when the state has no end-of-input action: the terminators of tree-sitter-go
+  (`choice('\n', ';', '\0')`) match at the end of a file without a final new line. Regular expressions are parsed by `RegexParser` (JavaScript syntax with the Rust extensions accepted by
 tree-sitter) and turned into NFAs, never forwarded to `System.Text.RegularExpressions`.
 
 ## The language: the "bytecode"
@@ -59,21 +68,54 @@ tree-sitter) and turned into NFAs, never forwarded to `System.Text.RegularExpres
 
 ## The parser runtime
 
-A port of `lib/src/parser.c`, `stack.c` and `subtree.c`, without incremental parsing:
+A port of `lib/src/parser.c`, `stack.c` and `subtree.c`:
 
 - `ParserEngine<TLexer>`: the parse loop (`ts_parser_parse`), `Lex`, `Advance`, `Shift`, `Reduce`, `Accept`, the error
   recovery (`HandleError`, `Recover`, `RecoverToState`, `DoAllPotentialReductions`, missing tokens) and `CondenseStack`.
   It is generic over the lex function (a struct), so the JIT specializes it for the table lexer or a generated lexer.
 - `ParseStack`: the graph-structured stack of the GLR algorithm, with versions, links, merges and `stack__iter`.
 - `SubtreeArena`: the nodes. tree-sitter allocates reference-counted subtrees; TreeSpitter stores the nodes as structs in
-  an arena (`SubtreeData[]`) and the children as runs of indices in one `int[]`. Nothing is freed during a parse; the
-  arrays become the `SyntaxTree`. Nodes have absolute positions (`PaddingStart`, `Start`, `End`) instead of relative
-  padding and size, since there's no incremental reuse.
+  an arena (`SubtreeData[]`) and the children as runs of indices in one `int[]`. Nothing is freed during a parse, and
+  nodes aren't changed once a tree is built. Positions are relative like in tree-sitter (padding, size and lookahead
+  bytes), so that subtrees can be shared by the trees of successive incremental parses; `SyntaxNode` computes the
+  absolute positions while navigating.
 - The input is UTF-8 and positions are byte offsets, like tree-sitter: the error costs count skipped bytes, so the trees
   of erroneous inputs match the native parser on the same UTF-8 bytes (the TreeSitter.DotNet binding parses strings as
   UTF-16, which doubles the costs and can change the recovery of large errors).
 - `SyntaxTree` and `SyntaxNode` expose the tree-sitter node model; `SExpressionWriter` ports `ts_subtree__write_to_string`
-  without recursion (repetitions are left-deep and tree-sitter's balancing isn't ported).
+  without recursion.
+
+### Incremental parsing
+
+`SyntaxTree.Edit` and `Parser.Parse(input, oldTree)` port `ts_tree_edit` and the reuse of the parser:
+
+- An arena is shared by the trees of a lineage: an incremental parse appends its nodes to the arena of the old tree and
+  references the reused subtrees, the old tree stays valid. The arena is reference counted by its trees and goes back to
+  its parser when they are all disposed. Parses and edits of the trees of an arena take its lock.
+- `Edit` is `ts_subtree_edit` with path copying: the nodes touching the edit are copied with their new padding and size
+  and marked as changed, the other trees sharing them aren't changed. Since nodes are immutable, `SyntaxNode` values of
+  an edited tree, its copies (`Copy`, which shares the nodes) and older trees stay valid.
+- The lexer records how far it read after each token (`ts_lexer_finish`: the lookahead character, plus 4 bytes after an
+  invalid UTF-8 sequence), and nodes summarize the lookahead bytes of their children, so that edits in this range
+  invalidate them.
+- The parse loop ports `ReusableNode`, `ts_parser__reuse_node`, `ts_parser__can_reuse_first_leaf` and
+  `ts_parser__breakdown_lookahead`. The reuse helpers aren't inlined in the parse loop: they would slow down the parses
+  from scratch.
+- Balancing (`ts_parser__balance_subtree`, `ts_subtree_compress`): tree-sitter rebalances the binary trees of the
+  repetitions after each parse, which changes the nodes that edits invalidate and that parses reuse. TreeSpitter
+  balances a tree when it's first edited, copied or reused instead, with copy on write: a tree which is only read doesn't
+  pay for it (about 8% of a parse of the JSON benchmark). Only the nodes created by the parse of the tree are balanced (tree-sitter
+  checks that the reference count is 1), and only the subtrees flagged as containing unbalanced repetitions are visited.
+- Like in tree-sitter, the nodes of a repetition are fragile (their reduction shares its entry with the shift of the
+  repetition) and aren't reused: an edit rebuilds the repetition nodes after it, but reuses its elements.
+- Compaction: the arena of a long series of incremental parses holds the nodes of the old trees. When the arena is more
+  than twice the size of the tree it was created for (plus 4096 nodes), the next incremental parse copies the old tree
+  to a new arena first.
+
+The benchmarks check the incremental parses against the native ones (`incremental-check`): the random edits of
+tree-sitter's corpus tests (`get_random_edit`) are applied to both trees, and the trees of the incremental parses, then
+of the parses after undoing the edits, are compared. They are identical for the corpus tests of the four grammars, 10
+trials each, including the cases where the native incremental parse differs from a fresh parse.
 
 ### Performance
 
@@ -84,7 +126,7 @@ The hot paths don't allocate. Measured optimizations, in the order of their gain
    into the arena and the parent is pushed on the same version (`ReduceInPlace`, `ParseStack.TryPopSinglePath`).
    tree-sitter creates a version for every reduction and renumbers it.
 2. Memory: the capacity of the arena is estimated from the previous parses (no resize), arrays are allocated
-   uninitialized, and a disposed `SyntaxTree` gives its arrays back to its parser.
+   uninitialized, and the arena of disposed trees goes back to its parser.
 3. Lexer self-loops (`ByteRun`): for each lex state, the ASCII bytes whose transition loops on the state (white space,
    contents of strings and comments, identifiers). Runs are scanned byte by byte, then with a vectorized
    `SearchValues<byte>.IndexOfAnyExcept` after 16 bytes: 6 to 10% on real-world files.
@@ -108,6 +150,6 @@ it compiles the source of the library (without Jint) and reads the grammars from
 
 ## Limitations
 
-- No incremental parsing (`ts_tree_edit`, node reuse) and no included ranges.
+- No included ranges, and no changed ranges (`ts_tree_get_changed_ranges`) between the trees of an incremental parse.
 - External scanners aren't supported: grammars with `externals` compile, but the external tokens never match.
 - The tree API is smaller than tree-sitter's (no queries, no tree cursor).
