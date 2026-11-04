@@ -2,8 +2,14 @@
 
 TreeSpitter is a C# port of tree-sitter: the parser generator (`tree-sitter generate`) and the parser runtime. The
 reference semantics are tree-sitter's, and the port keeps the structure, the names and the order of operations of the
-tree-sitter sources (v0.25.10; the runtime is unchanged in v0.26), so that both can be diffed. The goal is to produce
-exactly the same trees as tree-sitter, faster.
+tree-sitter sources (v0.27.1), so that both can be diffed. The goal is to produce exactly the same trees as tree-sitter,
+faster.
+
+The native parsers the benchmarks compare with (TreeSitter.DotNet 1.3.0) are tree-sitter 0.26.3, whose error recovery
+differs from 0.27 (the order of the reductions tried when recovering, the recovery of invalid lookaheads in the error
+state, nested error repetitions and their costs, the state of missing leaves). `Compatibility.TreeSitter026` restores the
+behavior of 0.26 for these changes only: the benchmarks set it to compare the trees, everything else is checked against
+the native parsers, and the trees of 0.27 are checked by the corpus tests.
 
 ```
 grammar.js ──Jint──▶ Grammar ──prepare──▶ syntax + lexical grammars ──build tables──▶ Language ──▶ Parser (GLR VM)
@@ -21,7 +27,7 @@ grammar.json ───────▶                                           
 
 ## Generation (`Generation/`)
 
-A port of `cli/generate/src` of tree-sitter v0.25.10:
+A port of `crates/generate/src` of tree-sitter v0.27.1 (the generator was ported from v0.25.10 and updated):
 
 | TreeSpitter | tree-sitter |
 | --- | --- |
@@ -151,5 +157,6 @@ it compiles the source of the library (without Jint) and reads the grammars from
 ## Limitations
 
 - No included ranges, and no changed ranges (`ts_tree_get_changed_ranges`) between the trees of an incremental parse.
+- The `eof()` rule of tree-sitter 0.27 isn't supported: the generator reports it.
 - External scanners aren't supported: grammars with `externals` compile, but the external tokens never match.
 - The tree API is smaller than tree-sitter's (no queries, no tree cursor).
