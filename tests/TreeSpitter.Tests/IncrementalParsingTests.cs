@@ -38,7 +38,15 @@ public sealed class IncrementalParsingTests
         var parser = Fixtures.Parser(grammar);
         var skipped = SkippedTests.TryGetValue(grammar, out var names) ? names : [];
         var tests = Testing.Corpus.Load(Fixtures.Corpus(grammar)).Where(t => !t.Skip && !skipped.Contains(t.Name)).ToList();
+
+        // The trials whose undone tree isn't the original one with the native parser too, because of its external
+        // scanner (file: test name (trial n)), like the known failures of the corpus tests
+        var knownFailuresPath = Path.Combine(Fixtures.GrammarDirectory(grammar), "known-incremental-failures.txt");
+        var knownFailures = File.Exists(knownFailuresPath)
+            ? File.ReadAllLines(knownFailuresPath).Where(l => l.Length > 0 && !l.StartsWith('#')).ToHashSet()
+            : [];
         var failures = new List<string>();
+        var newPasses = new HashSet<string>(knownFailures);
         var sameAsFresh = 0;
         var editedParses = 0;
         for (var testIndex = 0; testIndex < tests.Count; testIndex++)
@@ -80,9 +88,10 @@ public sealed class IncrementalParsingTests
                 using var undone = parser.Parse(input, edited);
                 CheckConsistentSizes(undone, input);
                 var actual = undone.ToSExpression();
-                if (actual != expected)
+                var key = $"{Path.GetFileNameWithoutExtension(tests[testIndex].File)}: {tests[testIndex].Name} (trial {trial})";
+                if (actual != expected && !newPasses.Remove(key))
                 {
-                    failures.Add($"{tests[testIndex].Name} (trial {trial})\n  expected: {expected}\n  actual:   {actual}");
+                    failures.Add($"{key}\n  expected: {expected}\n  actual:   {actual}");
                 }
             }
         }
@@ -93,7 +102,13 @@ public sealed class IncrementalParsingTests
             _output.WriteLine(failure);
         }
 
+        foreach (var key in newPasses)
+        {
+            _output.WriteLine("now passing, remove from known-incremental-failures.txt: " + key);
+        }
+
         Assert.Empty(failures);
+        Assert.Empty(newPasses);
     }
 
     [Theory]
