@@ -105,7 +105,7 @@ internal sealed class SubtreeArena
 
     private byte[]? _input;
     private int _inputLength;
-    private LineIndex? _lines;
+    private readonly LineIndex _lines = new();
 
     /// <summary>
     /// The number of nodes of the newest tree when it was created from scratch or compacted: when the arena is much
@@ -118,11 +118,14 @@ internal sealed class SubtreeArena
     {
         _input = input;
         _inputLength = length;
-        _lines = null;
+        _lines.Reset(input ?? [], length);
     }
 
-    /// <summary>The lines of the input of the current parse, computed when needed.</summary>
-    public LineIndex Lines => _lines ??= new LineIndex(_input ?? [], _inputLength);
+    /// <summary>
+    /// The lines of the input of the current parse, found as far as the rows are needed: only the error recovery needs
+    /// them, and the buffer is reused by the parses of the arena.
+    /// </summary>
+    public LineIndex Lines => _lines;
 
     /// <summary>Prepares the arena for a parse from scratch.</summary>
     public void Reset(int expectedNodes, int expectedChildren)
@@ -1067,36 +1070,76 @@ internal sealed class SubtreeList
     }
 }
 
-/// <summary>The offsets of the line starts of a text, to compute rows and columns.</summary>
+/// <summary>
+/// The offsets of the line starts of a text, to compute rows and columns. The lines are found as far as the rows are
+/// needed, so an index can't be read by several threads, unless it's complete: the one created for a text is.
+/// </summary>
 internal sealed class LineIndex
 {
-    private readonly int[] _lineStarts;
+    private byte[] _input = [];
+    private int _length;
+    private int[] _lineStarts = new int[64];
+    private int _lineCount = 1;
 
+    /// <summary>The newlines before this offset are indexed.</summary>
+    private int _scanned;
+
+    /// <summary>Creates an empty index, for the texts set with <see cref="Reset"/>.</summary>
+    public LineIndex()
+    {
+    }
+
+    /// <summary>Creates the complete index of a text.</summary>
     public LineIndex(byte[] input, int length)
     {
-        var starts = new List<int> { 0 };
-        var span = new ReadOnlySpan<byte>(input, 0, length);
-        var offset = 0;
-        while (true)
+        Reset(input, length);
+        Scan(length);
+    }
+
+    /// <summary>Indexes another text, reusing the buffer.</summary>
+    public void Reset(byte[] input, int length)
+    {
+        _input = input;
+        _length = length;
+        _lineCount = 1;
+        _scanned = 0;
+    }
+
+    public int Row(int position)
+    {
+        if (position > _scanned)
         {
-            var index = span.Slice(offset).IndexOf((byte)'\n');
+            Scan(position);
+        }
+
+        var index = Array.BinarySearch(_lineStarts, 0, _lineCount, position);
+        return index >= 0 ? index : ~index - 1;
+    }
+
+    public int Column(int position) => position - _lineStarts[Row(position)];
+
+    /// <summary>Indexes the line starts up to a position: the ones of the newlines before it.</summary>
+    private void Scan(int position)
+    {
+        var end = Math.Min(position, _length);
+        var offset = _scanned;
+        while (offset < end)
+        {
+            var index = new ReadOnlySpan<byte>(_input, offset, end - offset).IndexOf((byte)'\n');
             if (index < 0)
             {
                 break;
             }
 
             offset += index + 1;
-            starts.Add(offset);
+            if (_lineCount == _lineStarts.Length)
+            {
+                Array.Resize(ref _lineStarts, _lineCount * 2);
+            }
+
+            _lineStarts[_lineCount++] = offset;
         }
 
-        _lineStarts = [.. starts];
+        _scanned = end == _length ? int.MaxValue : end;
     }
-
-    public int Row(int position)
-    {
-        var index = Array.BinarySearch(_lineStarts, position);
-        return index >= 0 ? index : ~index - 1;
-    }
-
-    public int Column(int position) => position - _lineStarts[Row(position)];
 }
