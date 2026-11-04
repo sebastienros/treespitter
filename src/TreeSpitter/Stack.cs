@@ -725,7 +725,7 @@ internal sealed class ParseStack
             node1.State == node2.State &&
             node1.Position == node2.Position &&
             node1.ErrorCost == node2.ErrorCost &&
-            head1.LastExternalToken == head2.LastExternalToken;
+            _arena.ExternalStateEquals(head1.LastExternalToken, head2.LastExternalToken);
     }
 
     private bool SubtreeIsEquivalent(int left, int right)
@@ -755,7 +755,8 @@ internal sealed class ParseStack
         return l.Padding == r.Padding &&
             l.Size == r.Size &&
             l.ChildCount == r.ChildCount &&
-            (l.Flags & SubtreeFlags.Extra) == (r.Flags & SubtreeFlags.Extra);
+            (l.Flags & SubtreeFlags.Extra) == (r.Flags & SubtreeFlags.Extra) &&
+            _arena.ExternalStateEquals(left, right);
     }
 
     private void AddLink(int self, StackLink link)

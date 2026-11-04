@@ -52,6 +52,12 @@ internal static class SubtreeFlags
 
     /// <summary>The subtree contains an unbalanced repetition: <see cref="SubtreeArena.Balance"/> must visit it.</summary>
     public const ushort NeedsBalancing = 512;
+
+    /// <summary>The subtree contains an external token which changed the state of the external scanner.</summary>
+    public const ushort HasExternalScannerStateChange = 1024;
+
+    /// <summary>The validity of the subtree depends on its column: its external scanner read the column.</summary>
+    public const ushort DependsOnColumn = 2048;
 }
 
 /// <summary>
@@ -75,6 +81,11 @@ internal sealed class SubtreeArena
     public int Count = 1;
     public int[] Children = new int[1024];
     public int ChildrenCount;
+
+    // The states of the external scanner after the external tokens: a leaf with HasExternalTokens has its state at
+    // FirstChild, of NamedChildCount bytes (fields which leaves don't use otherwise)
+    public byte[] ExternalStates = [];
+    public int ExternalStatesCount;
 
     private readonly Language _language;
     private int[] _compareStack = new int[64];
@@ -118,6 +129,7 @@ internal sealed class SubtreeArena
     {
         Count = 1;
         ChildrenCount = 0;
+        ExternalStatesCount = 0;
         if (Nodes.Length < expectedNodes)
         {
             Nodes = AllocateUninitialized<SubtreeData>(expectedNodes);
@@ -246,6 +258,69 @@ internal sealed class SubtreeArena
         return index;
     }
 
+    /// <summary>Stores the state of the external scanner after an external token, a leaf.</summary>
+    public void SetExternalState(int leaf, ReadOnlySpan<byte> state, bool changed, bool dependsOnColumn)
+    {
+        if (ExternalStatesCount + state.Length > ExternalStates.Length)
+        {
+            Array.Resize(ref ExternalStates, Math.Max(256, Math.Max(ExternalStates.Length * 2, ExternalStatesCount + state.Length)));
+        }
+
+        state.CopyTo(ExternalStates.AsSpan(ExternalStatesCount));
+        ref var node = ref Nodes[leaf];
+        node.FirstChild = ExternalStatesCount;
+        node.NamedChildCount = state.Length;
+        node.Flags |= SubtreeFlags.HasExternalTokens;
+        if (changed)
+        {
+            node.Flags |= SubtreeFlags.HasExternalScannerStateChange;
+        }
+
+        if (dependsOnColumn)
+        {
+            node.Flags |= SubtreeFlags.DependsOnColumn;
+        }
+
+        ExternalStatesCount += state.Length;
+    }
+
+    /// <summary>The state of the external scanner after a subtree, tree-sitter's <c>ts_subtree_external_scanner_state</c>.</summary>
+    public ReadOnlySpan<byte> ExternalState(int subtree)
+    {
+        ref var node = ref Nodes[subtree];
+        return subtree != 0 && node.ChildCount == 0 && (node.Flags & SubtreeFlags.HasExternalTokens) != 0
+            ? new ReadOnlySpan<byte>(ExternalStates, node.FirstChild, node.NamedChildCount)
+            : default;
+    }
+
+    /// <summary>tree-sitter's <c>ts_subtree_external_scanner_state_eq</c>.</summary>
+    public bool ExternalStateEquals(int left, int right) => left == right || ExternalState(left).SequenceEqual(ExternalState(right));
+
+    /// <summary>The last external token of a subtree, tree-sitter's <c>ts_subtree_last_external_token</c>.</summary>
+    public int LastExternalToken(int tree)
+    {
+        if ((Nodes[tree].Flags & SubtreeFlags.HasExternalTokens) == 0)
+        {
+            return 0;
+        }
+
+        while (Nodes[tree].ChildCount > 0)
+        {
+            ref var data = ref Nodes[tree];
+            for (var i = data.ChildCount - 1; i >= 0; i--)
+            {
+                var child = Children[data.FirstChild + i];
+                if ((Nodes[child].Flags & SubtreeFlags.HasExternalTokens) != 0)
+                {
+                    tree = child;
+                    break;
+                }
+            }
+        }
+
+        return tree;
+    }
+
     public int NewMissingLeaf(ushort symbol, int lookaheadBytes, ushort parseState)
     {
         var index = NewLeaf(symbol, 0, 0, lookaheadBytes, parseState, false);
@@ -347,7 +422,7 @@ internal sealed class SubtreeArena
         var nodes = Nodes;
         ref var self = ref nodes[index];
         var symbol = self.Symbol;
-        var flags = (ushort)(self.Flags & ~(SubtreeFlags.HasExternalTokens | SubtreeFlags.NeedsBalancing));
+        var flags = (ushort)(self.Flags & ~(SubtreeFlags.HasExternalTokens | SubtreeFlags.NeedsBalancing | SubtreeFlags.HasExternalScannerStateChange | SubtreeFlags.DependsOnColumn));
         var parseState = self.ParseState;
         var language = _language;
         var maxAliasSequenceLength = language.MaxAliasSequenceLength;
@@ -452,7 +527,15 @@ internal sealed class SubtreeArena
                 namedChildCount += child.NamedChildCount;
             }
 
-            flags |= (ushort)(childFlags & (SubtreeFlags.HasExternalTokens | SubtreeFlags.NeedsBalancing));
+            flags |= (ushort)(childFlags & (SubtreeFlags.HasExternalTokens | SubtreeFlags.NeedsBalancing | SubtreeFlags.HasExternalScannerStateChange));
+
+            // tree-sitter 0.27: a node depends on the column of its first child, and of the next ones while it fits on
+            // a line (the size before the child spans no row)
+            if ((childFlags & SubtreeFlags.DependsOnColumn) != 0 &&
+                (i == 0 || Rows(position, padding, size - child.Padding - child.Size) == 0))
+            {
+                flags |= SubtreeFlags.DependsOnColumn;
+            }
             if (childSymbol == Language.ErrorSymbol)
             {
                 flags |= SubtreeFlags.FragileLeft | SubtreeFlags.FragileRight;
@@ -646,6 +729,10 @@ internal sealed class SubtreeArena
 
             var first = Nodes[copy].FirstChild;
             var childRight = 0;
+
+            // The rows and columns which tree-sitter compares for the nodes depending on their column aren't tracked:
+            // the children after the edit of these nodes are invalidated
+            var parentDependsOnColumn = (Nodes[copy].Flags & SubtreeFlags.DependsOnColumn) != 0;
             for (var i = 0; i < childCount; i++)
             {
                 var child = Children[first + i];
@@ -659,8 +746,9 @@ internal sealed class SubtreeArena
                     continue;
                 }
 
-                // The children after the edit are not affected
-                if (childLeft > editOldEnd || (childLeft == editOldEnd && childSize > 0 && i > 0))
+                // The children after the edit are not affected, unless their validity depends on their column
+                if ((childLeft > editOldEnd || (childLeft == editOldEnd && childSize > 0 && i > 0)) &&
+                    !parentDependsOnColumn && (Nodes[child].Flags & SubtreeFlags.DependsOnColumn) == 0)
                 {
                     break;
                 }
@@ -705,6 +793,13 @@ internal sealed class SubtreeArena
             ref var data = ref target.Nodes[copy];
             data = Nodes[source];
             var count = data.ChildCount;
+            if (count == 0 && (data.Flags & SubtreeFlags.HasExternalTokens) != 0)
+            {
+                var flags = data.Flags;
+                target.SetExternalState(copy, ExternalState(source), false, false);
+                target.Nodes[copy].Flags = flags;
+            }
+
             if (count > 0)
             {
                 var sourceFirst = data.FirstChild;

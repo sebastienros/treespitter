@@ -77,6 +77,19 @@ public sealed partial class Language
 {
     private Func<Language, IParserEngine>? _engineFactory;
 
+    /// <summary>Gets the factory of the external scanner of the language, set by <see cref="WithExternalScanner"/>.</summary>
+    public Func<IExternalScanner>? ExternalScannerFactory { get; private set; }
+
+    /// <summary>
+    /// Uses an external scanner for the grammar's <c>externals</c>: each parser creates one with the factory. Without
+    /// a scanner, the external tokens never match.
+    /// </summary>
+    public Language WithExternalScanner(Func<IExternalScanner> factory)
+    {
+        ExternalScannerFactory = factory ?? throw new ArgumentNullException(nameof(factory));
+        return this;
+    }
+
     internal IParserEngine CreateEngine() =>
         _engineFactory is { } factory ? factory(this) : new ParserEngine<TableLexFunction>(this, TableLexFunction);
 

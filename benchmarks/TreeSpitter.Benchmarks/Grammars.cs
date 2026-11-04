@@ -29,6 +29,11 @@ internal static class Grammars
             if (!Languages.TryGetValue(name, out var language))
             {
                 language = TreeSpitter.Language.FromGrammarFile(Path(name));
+                if (ExternalScanner(name) is { } scanner)
+                {
+                    language.WithExternalScanner(scanner);
+                }
+
                 Languages[name] = language;
             }
 
@@ -36,15 +41,27 @@ internal static class Grammars
         }
     }
 
-    /// <summary>The source-generated language of a grammar.</summary>
-    public static Language GeneratedLanguage(string name) => name switch
+    /// <summary>The external scanner of a grammar: the one of its generated language.</summary>
+    public static Func<IExternalScanner>? ExternalScanner(string name) => GeneratedLanguage(name).ExternalScannerFactory;
+
+    /// <summary>
+    /// The source-generated language of a grammar, from TreeSpitter.Languages: the class marked with
+    /// <c>[GeneratedLanguage("name/grammar.json")]</c>.
+    /// </summary>
+    public static Language GeneratedLanguage(string name)
     {
-        "json" => TreeSpitter.Languages.Json.Language,
-        "go" => TreeSpitter.Languages.Go.Language,
-        "java" => TreeSpitter.Languages.Java.Language,
-        "c" => TreeSpitter.Languages.C.Language,
-        _ => throw new ArgumentException($"No generated language '{name}'.", nameof(name)),
-    };
+        var type = typeof(TreeSpitter.Languages.Json).Assembly.GetTypes().FirstOrDefault(t =>
+            t.GetCustomAttributes(typeof(GeneratedLanguageAttribute), false).Cast<GeneratedLanguageAttribute>().Any(a => a.GrammarPath == name + "/grammar.json"))
+            ?? throw new ArgumentException($"No generated language '{name}'.", nameof(name));
+        return (Language)type.GetProperty("Language")!.GetValue(null)!;
+    }
+
+    /// <summary>All the vendored grammars: the directories of the grammars folder with a grammar.json and a corpus.</summary>
+    public static string[] All() => Directory.GetDirectories(System.IO.Path.Combine(Root(), "grammars"))
+        .Where(d => File.Exists(System.IO.Path.Combine(d, "grammar.json")) && Directory.Exists(System.IO.Path.Combine(d, "corpus")))
+        .Select(d => System.IO.Path.GetFileName(d)!)
+        .OrderBy(n => n, StringComparer.Ordinal)
+        .ToArray();
 
     /// <summary>
     /// Runs a comparison with the native parsers, which are tree-sitter 0.26: the runtime reproduces tree-sitter 0.27,

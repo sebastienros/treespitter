@@ -13,3 +13,6 @@ TestResults/
 .nuget/
 node_modules/
 *.bundle
+
+# Grammars extending other grammars vendor them as packages
+!/grammars/*/node_modules/

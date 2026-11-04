@@ -172,3 +172,25 @@ public sealed class GeneratorTests
         Assert.Contains("The non-ASCII byte class \\x80-\\xff via (?-u:...) is not supported. Remove the `-u` flag.", exception.Message);
     }
 }
+
+public sealed class WideCharTests
+{
+    [Fact]
+    public void TheWideCharacterFunctionsAreTheOnesOfTreeSitterWasmStandardLibrary()
+    {
+        Assert.True(WideChar.IsSpace(' ') && WideChar.IsSpace('\t') && WideChar.IsSpace(0x2028) && WideChar.IsSpace(0x3000));
+        Assert.False(WideChar.IsSpace(0xA0) || WideChar.IsSpace(0x2007) || WideChar.IsSpace(0x1680) || WideChar.IsSpace('a'));
+        Assert.True(WideChar.IsAlpha('a') && WideChar.IsAlpha('é') && WideChar.IsAlpha('Σ') && WideChar.IsAlpha(0x4E00));
+        Assert.False(WideChar.IsAlpha('1') || WideChar.IsAlpha('_') || WideChar.IsAlpha(' '));
+        Assert.True(WideChar.IsAlnum('7') && WideChar.IsDigit('0') && !WideChar.IsDigit('٣'));
+        Assert.True(WideChar.IsPunct('!') && WideChar.IsPunct('§') && !WideChar.IsPunct('a'));
+        Assert.Equal('A', WideChar.ToUpper('a'));
+        Assert.Equal('σ', WideChar.ToLower('Σ'));
+        Assert.Equal('Σ', WideChar.ToUpper('ς'));
+        Assert.Equal('k', WideChar.ToLower(0x212A));
+        Assert.Equal(0x1C4, WideChar.ToUpper(0x1C5));
+        Assert.Equal(0x1C6, WideChar.ToLower(0x1C5));
+        Assert.True(WideChar.IsUpper('Q') && WideChar.IsLower('q') && !WideChar.IsUpper('1'));
+        Assert.True(WideChar.IsXDigit('F') && WideChar.IsXDigit('a') && !WideChar.IsXDigit('g'));
+    }
+}

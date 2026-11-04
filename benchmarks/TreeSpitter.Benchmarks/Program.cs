@@ -54,11 +54,11 @@ if (args.Length > 0 && args[0] == "incremental-trace")
 if (args.Length > 0 && args[0] == "incremental-check")
 {
     // incremental-check [languages] [trials]: compares the incremental parses of random edits with the native ones
-    // incremental-check [languages] [trials] [0.27]: with 0.27, the trees are compared with the error recovery of
+    // incremental-check [languages|all] [trials] [0.27]: with 0.27, the trees are compared with the error recovery of
     // tree-sitter 0.27, which differs from the native 0.26 parsers
     var trials = args.Length > 2 ? int.Parse(args[2]) : 6;
     var as026 = !(args.Length > 3 && args[3] == "0.27");
-    foreach (var language in args.Length > 1 ? args[1].Split(',') : Grammars.Names)
+    foreach (var language in args.Length > 1 && args[1] != "all" ? args[1].Split(',') : Grammars.All())
     {
         if (as026)
         {

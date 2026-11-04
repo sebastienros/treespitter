@@ -22,10 +22,7 @@ public sealed class IncrementalParsingTests
     }
 
     [Theory]
-    [InlineData("json")]
-    [InlineData("go")]
-    [InlineData("java")]
-    [InlineData("c")]
+    [MemberData(nameof(Fixtures.Grammars), MemberType = typeof(Fixtures))]
     public void RandomEditsAndTheirUndoGiveTheTreesOfAFreshParse(string grammar)
     {
         var parser = Fixtures.Parser(grammar);
