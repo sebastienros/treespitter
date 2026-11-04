@@ -14,6 +14,8 @@
   <Folder Name="/src/">
     <Project Path="src/TreeSpitter/TreeSpitter.csproj" />
     <Project Path="src/TreeSpitter.Cli/TreeSpitter.Cli.csproj" />
+    <Project Path="src/TreeSpitter.Generators/TreeSpitter.Generators.csproj" />
+    <Project Path="src/TreeSpitter.Languages/TreeSpitter.Languages.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/TreeSpitter.Tests/TreeSpitter.Tests.csproj" />

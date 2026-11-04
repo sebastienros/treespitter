@@ -2,6 +2,30 @@ using System.Diagnostics;
 using BenchmarkDotNet.Running;
 using TreeSpitter.Benchmarks;
 
+if (args.Length > 0 && args[0] == "profile")
+{
+    // Parses in a loop, to profile with dotnet-trace: profile <language> <size> <vm|generated> <seconds>
+    var benchmark = new NativeComparisonBenchmarks { Language = args[1], Size = int.Parse(args[2]) };
+    benchmark.Setup();
+    var stopwatch = Stopwatch.StartNew();
+    var count = 0;
+    while (stopwatch.Elapsed.TotalSeconds < double.Parse(args[4]))
+    {
+        if (args[3] == "vm")
+        {
+            benchmark.Vm();
+        }
+        else
+        {
+            benchmark.Generated();
+        }
+        count++;
+    }
+
+    Console.WriteLine($"{count} parses, {stopwatch.Elapsed.TotalMilliseconds / count:F3} ms per parse");
+    return;
+}
+
 if (args.Length > 0 && args[0] == "quick")
 {
     // A quick comparison without BenchmarkDotNet, to iterate on optimizations: checks the trees and times the parsers
@@ -14,8 +38,9 @@ if (args.Length > 0 && args[0] == "quick")
             var benchmark = new NativeComparisonBenchmarks { Language = language, Size = size };
             benchmark.Setup();
             var native = Measure(benchmark.Native);
-            var vm = Measure(() => benchmark.Vm());
-            Console.WriteLine($"{language,-5} {size,7}: native {native,8:F3} ms   vm {vm,8:F3} ms   ratio {vm / native,5:F2}");
+            var vm = Measure(benchmark.Vm);
+            var generated = Measure(benchmark.Generated);
+            Console.WriteLine($"{language,-5} {size,7}: native {native,8:F3} ms   vm {vm,8:F3} ms ({vm / native,4:F2})   generated {generated,8:F3} ms ({generated / native,4:F2})");
             benchmark.Cleanup();
         }
     }

@@ -1,0 +1,69 @@
+using System.Text;
+using TreeSpitter.CodeGen;
+using Xunit;
+
+namespace TreeSpitter.Tests;
+
+public sealed class LanguageTests
+{
+    [Theory]
+    [InlineData("json")]
+    [InlineData("go")]
+    [InlineData("java")]
+    [InlineData("c")]
+    public void ALoadedLanguageParsesLikeTheCompiledOne(string grammar)
+    {
+        var language = Fixtures.Language(grammar);
+        var loaded = Language.Load(language.Save());
+
+        Assert.Equal(language.StateCount, loaded.StateCount);
+        Assert.Equal(language.SymbolCount, loaded.SymbolCount);
+        foreach (var test in Testing.Corpus.Load(Fixtures.Corpus(grammar)).Take(20))
+        {
+            Assert.Equal(new Parser(language).Parse(test.Input).ToSExpression(), new Parser(loaded).Parse(test.Input).ToSExpression());
+        }
+    }
+
+    [Theory]
+    [InlineData("json")]
+    [InlineData("go")]
+    [InlineData("java")]
+    [InlineData("c")]
+    public void TheGeneratedLanguageHasTheTablesOfTheCompiledOne(string grammar)
+    {
+        var compiled = Fixtures.Language(grammar);
+        var generated = Fixtures.GeneratedLanguage(grammar);
+
+        Assert.Equal(compiled.StateCount, generated.StateCount);
+        Assert.Equal(compiled.SymbolCount, generated.SymbolCount);
+        Assert.Equal(compiled.LexStateCount, generated.LexStateCount);
+        Assert.Equal(compiled.Save(), generated.Save());
+    }
+
+    [Fact]
+    public void TheGeneratorEmitsAClassWithTheLanguage()
+    {
+        var source = CSharpGenerator.Generate(Fixtures.Language("json"), new CSharpGeneratorOptions { Namespace = "Demo", ClassName = "JsonParser" });
+
+        Assert.Contains("namespace Demo", source);
+        Assert.Contains("public static partial class JsonParser", source);
+        Assert.Contains("private static bool LexMain(global::TreeSpitter.Lexer lexer, int state)", source);
+        Assert.Contains("global::TreeSpitter.ILexFunction", source);
+    }
+
+    [Fact]
+    public void ParsesUtf8WithByteOffsets()
+    {
+        var parser = new Parser(Fixtures.GeneratedLanguage("json"));
+        var input = Encoding.UTF8.GetBytes("{\"é\": [1, \"☃\"]}");
+        var tree = parser.Parse(input);
+
+        Assert.False(tree.HasError);
+        var pair = tree.RootNode.NamedChildren.First().NamedChildren.First();
+        Assert.Equal("pair", pair.Type);
+        Assert.Equal("\"é\"", pair.ChildByFieldName("key").Text);
+        Assert.Equal(1, pair.StartByte);
+        Assert.Equal(input.Length - 1, pair.EndByte);
+        Assert.Equal(new Point(0, 1), pair.StartPoint);
+    }
+}

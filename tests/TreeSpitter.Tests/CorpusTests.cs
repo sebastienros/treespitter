@@ -34,9 +34,17 @@ public sealed class CorpusTests
     [InlineData("go")]
     [InlineData("java")]
     [InlineData("c")]
-    public void MatchesTheKnownResults(string grammar)
+    public void TheVirtualMachineMatchesTheKnownResults(string grammar) => MatchesTheKnownResults(grammar, Fixtures.Parser(grammar));
+
+    [Theory]
+    [InlineData("json")]
+    [InlineData("go")]
+    [InlineData("java")]
+    [InlineData("c")]
+    public void TheGeneratedParsersMatchTheKnownResults(string grammar) => MatchesTheKnownResults(grammar, new Parser(Fixtures.GeneratedLanguage(grammar)));
+
+    private void MatchesTheKnownResults(string grammar, Parser parser)
     {
-        var parser = Fixtures.Parser(grammar);
         var knownFailuresPath = Path.Combine(Fixtures.GrammarDirectory(grammar), "known-failures.txt");
         var knownFailures = File.Exists(knownFailuresPath)
             ? File.ReadAllLines(knownFailuresPath).Where(l => l.Length > 0 && !l.StartsWith('#')).ToHashSet()

@@ -6,7 +6,7 @@ namespace TreeSpitter.Tests;
 /// <summary>The grammars vendored in the grammars folder, and their languages, shared by the tests.</summary>
 internal static class Fixtures
 {
-    private static readonly ConcurrentDictionary<string, Lazy<Language>> Languages = new();
+    private static readonly ConcurrentDictionary<string, Lazy<Language>> CompiledLanguages = new();
 
     public static readonly string[] GrammarNames = ["json", "go", "java", "c"];
 
@@ -19,9 +19,19 @@ internal static class Fixtures
     public static string Corpus(string name) => Path.Combine(GrammarDirectory(name), "corpus");
 
     public static Language Language(string name)
-        => Languages.GetOrAdd(name, n => new Lazy<Language>(() => TreeSpitter.Language.FromGrammarFile(GrammarJs(n)))).Value;
+        => CompiledLanguages.GetOrAdd(name, n => new Lazy<Language>(() => TreeSpitter.Language.FromGrammarFile(GrammarJs(n)))).Value;
 
     public static Parser Parser(string name) => new(Language(name));
+
+    /// <summary>The source-generated language of a grammar, from TreeSpitter.Languages.</summary>
+    public static Language GeneratedLanguage(string name) => name switch
+    {
+        "json" => Languages.Json.Language,
+        "go" => Languages.Go.Language,
+        "java" => Languages.Java.Language,
+        "c" => Languages.C.Language,
+        _ => throw new ArgumentException("No generated language " + name, nameof(name)),
+    };
 
     public static Parser FromSource(string source) => new(TreeSpitter.Language.FromGrammarSource(source));
 

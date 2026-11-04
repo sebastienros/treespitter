@@ -36,6 +36,16 @@ internal static class Grammars
         }
     }
 
+    /// <summary>The source-generated language of a grammar.</summary>
+    public static Language GeneratedLanguage(string name) => name switch
+    {
+        "json" => TreeSpitter.Languages.Json.Language,
+        "go" => TreeSpitter.Languages.Go.Language,
+        "java" => TreeSpitter.Languages.Java.Language,
+        "c" => TreeSpitter.Languages.C.Language,
+        _ => throw new ArgumentException($"No generated language '{name}'.", nameof(name)),
+    };
+
     public static string Path(string name)
     {
         // The benchmarks run from bin/, the grammars are in the repository

@@ -122,14 +122,26 @@ public interface ILexFunction
     bool LexKeyword(Lexer lexer, int state);
 }
 
-/// <summary>The lexer of the virtual machine: runs the lex automata of a <see cref="Language"/>.</summary>
-internal readonly struct TableLexFunction(LexAutomaton main, LexAutomaton keyword) : ILexFunction
+/// <summary>
+/// The lexer of the virtual machine: runs the lex automata of a <see cref="Language"/>. Generated parsers use it for
+/// the automata too large to be compiled efficiently.
+/// </summary>
+[EditorBrowsable(EditorBrowsableState.Advanced)]
+public readonly struct TableLexFunction : ILexFunction
 {
-    private readonly LexAutomaton _main = main;
-    private readonly LexAutomaton _keyword = keyword;
+    internal TableLexFunction(LexAutomaton main, LexAutomaton keyword)
+    {
+        _main = main;
+        _keyword = keyword;
+    }
 
+    private readonly LexAutomaton _main;
+    private readonly LexAutomaton _keyword;
+
+    /// <inheritdoc />
     public bool Lex(Lexer lexer, int state) => Run(_main, lexer, state);
 
+    /// <inheritdoc />
     public bool LexKeyword(Lexer lexer, int state) => Run(_keyword, lexer, state);
 
     private static bool Run(LexAutomaton table, Lexer lexer, int state)

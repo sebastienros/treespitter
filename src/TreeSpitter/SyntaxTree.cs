@@ -13,23 +13,21 @@ public readonly record struct Point(int Row, int Column)
 /// A syntax tree, the result of a parse. The nodes are stored in arrays owned by the tree, and exposed as
 /// <see cref="SyntaxNode"/> values. Positions are byte offsets in the UTF-8 input.
 /// </summary>
-public sealed class SyntaxTree
+public sealed class SyntaxTree : IDisposable
 {
-    private readonly SubtreeData[] _nodes;
-    private readonly int[] _children;
+    private SubtreeData[]? _nodes;
+    private int[]? _children;
+    private SubtreeArena? _arena;
     private LineIndex? _lines;
 
     internal SyntaxTree(Language language, byte[] input, int length, SubtreeArena arena, int root)
     {
         Language = language;
         Input = new ReadOnlyMemory<byte>(input, 0, length);
-        _nodes = arena.Nodes;
-        _children = arena.Children;
+        // The arrays now belong to the tree, until it's disposed
+        (_nodes, _children) = arena.Detach();
+        _arena = arena;
         Root = root;
-
-        // The arrays now belong to the tree: the arena allocates new ones for the next parse
-        arena.Nodes = new SubtreeData[Math.Min(arena.Nodes.Length, 1024)];
-        arena.Children = new int[Math.Min(arena.Children.Length, 1024)];
     }
 
     /// <summary>Gets the language of the tree.</summary>
@@ -40,15 +38,33 @@ public sealed class SyntaxTree
 
     internal int Root { get; }
 
-    internal SubtreeData[] Nodes => _nodes;
+    internal SubtreeData[] Nodes => _nodes ?? throw new ObjectDisposedException(nameof(SyntaxTree));
 
-    internal int[] Children => _children;
+    internal int[] Children => _children ?? throw new ObjectDisposedException(nameof(SyntaxTree));
 
     /// <summary>Gets the root node.</summary>
     public SyntaxNode RootNode => new(this, Root, 0, 0);
 
     /// <summary>Gets whether the tree contains syntax errors (ERROR or MISSING nodes).</summary>
-    public bool HasError => _nodes[Root].ErrorCost > 0;
+    public bool HasError => Nodes[Root].ErrorCost > 0;
+
+    /// <summary>
+    /// Releases the memory of the tree to its parser, which reuses it for the next parse. The tree and its nodes can't
+    /// be used anymore. Disposing trees is optional: undisposed trees are collected by the GC.
+    /// </summary>
+    public void Dispose()
+    {
+        var nodes = _nodes;
+        var children = _children;
+        var arena = _arena;
+        _nodes = null;
+        _children = null;
+        _arena = null;
+        if (nodes is not null && children is not null && arena is not null)
+        {
+            arena.Return(nodes, children);
+        }
+    }
 
     internal Point PointAt(int position)
     {

@@ -31,6 +31,8 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
     private readonly List<(ushort Symbol, int Count, int DynamicPrecedence, ushort ProductionId)> _reduceActions = [];
     private readonly ParseActionEntry[] _actions;
     private int _finishedTree;
+    private int _nodesPerKilobyte = 400;
+    private int _childrenPerKilobyte = 400;
     private int _acceptCount;
     private int _cachedToken;
     private int _cachedTokenPosition;
@@ -49,7 +51,8 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
     {
         _lexer.Input = input;
         _lexer.Length = length;
-        _arena.Reset(Math.Max(64, length / 2));
+        // The capacity of the arena is estimated from the previous parses, to avoid resizing the arrays
+        _arena.Reset(EstimateCapacity(_nodesPerKilobyte, length), EstimateCapacity(_childrenPerKilobyte, length));
         _arena.Lines = null;
         _lines = null;
         _stack.Lines = null;
@@ -92,9 +95,17 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
         }
         while (versionCount != 0);
 
-        var tree = new SyntaxTree(_language, input, length, _arena, _finishedTree);
-        return tree;
+        if (length > 0)
+        {
+            _nodesPerKilobyte = Math.Max(_nodesPerKilobyte, (int)Math.Min(int.MaxValue, _arena.Count * 1024L / length));
+            _childrenPerKilobyte = Math.Max(_childrenPerKilobyte, (int)Math.Min(int.MaxValue, _arena.ChildrenCount * 1024L / length));
+        }
+
+        return new SyntaxTree(_language, input, length, _arena, _finishedTree);
     }
+
+    private static int EstimateCapacity(int perKilobyte, int length) =>
+        (int)Math.Min(int.MaxValue / 2, 64 + (long)length * perKilobyte / 1024 * 9 / 8);
 
     private LineIndex Lines()
     {
@@ -435,7 +446,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
     /// A reduction of the only version of the stack when the popped path has no merged nodes: the same result as
     /// <see cref="Reduce"/> followed by the renumbering of the new version, without creating a version.
     /// </summary>
-    private bool ReduceInPlace(int version, ushort symbol, int count, int dynamicPrecedence, ushort productionId, bool endOfNonTerminalExtra)
+    private bool ReduceInPlace(int version, ushort symbol, int count, int dynamicPrecedence, ushort productionId, bool endOfNonTerminalExtra, bool isFragile)
     {
         if (!_stack.TryPopSinglePath(version, count, _trailingExtras, out var baseNode, out var firstChild, out var childCount))
         {
@@ -452,7 +463,16 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
             parentData.Flags |= SubtreeFlags.Extra;
         }
 
-        parentData.ParseState = state;
+        if (isFragile)
+        {
+            parentData.Flags |= SubtreeFlags.FragileLeft | SubtreeFlags.FragileRight;
+            parentData.ParseState = SubtreeArena.StateNone;
+        }
+        else
+        {
+            parentData.ParseState = state;
+        }
+
         parentData.DynamicPrecedence += dynamicPrecedence;
 
         _stack.Head(version).Node = baseNode;
@@ -460,6 +480,29 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
         for (var j = 0; j < _trailingExtras.Count; j++)
         {
             _stack.Push(version, _trailingExtras.Items[j], false, nextState);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Whether the action at <paramref name="index"/> is the only one of its entry that does something: the others are
+    /// shifts of repetitions, which the parse loop skips. Then the reduction doesn't need a new stack version.
+    /// </summary>
+    private bool IsOnlyAction(int entryIndex, int entryCount, int index)
+    {
+        for (var i = 0; i < entryCount; i++)
+        {
+            if (i == index)
+            {
+                continue;
+            }
+
+            var other = _actions[entryIndex + i];
+            if (other.Type != ParseActionType.Shift || !other.IsRepetition)
+            {
+                return false;
+            }
         }
 
         return true;
@@ -1109,8 +1152,8 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
 
                     case ParseActionType.Reduce:
                         {
-                            if (entryCount == 1 && _stack.VersionCount == 1 &&
-                                ReduceInPlace(version, action.StateOrSymbol, action.ChildCount, action.DynamicPrecedence, action.ProductionId, lookahead == 0))
+                            if (_stack.VersionCount == 1 && (entryCount == 1 || IsOnlyAction(entryIndex, entryCount, i)) &&
+                                ReduceInPlace(version, action.StateOrSymbol, action.ChildCount, action.DynamicPrecedence, action.ProductionId, lookahead == 0, entryCount > 1))
                             {
                                 reducedInPlace = true;
                                 break;

@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <IsPackable>true</IsPackable>
+    <PackageId>TreeSpitter.Generators</PackageId>
+    <Description>Source generator for TreeSpitter: compiles tree-sitter grammars (grammar.json) at build time into precompiled parsers, with the lexer as C# code.</Description>
+    <PackageTags>tree-sitter;parser;source-generator;roslyn</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+    <DefineConstants>$(DefineConstants);TREESPITTER_GENERATOR</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
+    <PackageReference Include="Meziantou.Polyfill" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The generator compiles the grammar with the sources of the library, without Jint (it reads grammar.json files). -->
+    <Compile Include="../TreeSpitter/Grammars/*.cs" LinkBase="Linked/Grammars" />
+    <Compile Include="../TreeSpitter/Generation/*.cs" LinkBase="Linked/Generation" />
+    <Compile Include="../TreeSpitter/Lexing/*.cs" LinkBase="Linked/Lexing" />
+    <Compile Include="../TreeSpitter/CodeGen/*.cs" LinkBase="Linked/CodeGen" />
+    <Compile Include="../TreeSpitter/Language.cs;../TreeSpitter/LanguageSerializer.cs;../TreeSpitter/LexAutomaton.cs" LinkBase="Linked" />
+  </ItemGroup>
+  <ItemGroup>
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md;AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="$(OutputPath)/$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

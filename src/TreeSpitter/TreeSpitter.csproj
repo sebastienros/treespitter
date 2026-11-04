@@ -21,6 +21,5 @@
     <None Include="../../README.md" Pack="true" PackagePath="/" />
     <None Include="../../THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="licenses/THIRD-PARTY-NOTICES.txt" />
     <InternalsVisibleTo Include="TreeSpitter.Tests" />
-    <InternalsVisibleTo Include="TreeSpitter.Benchmarks" />
   </ItemGroup>
 </Project>

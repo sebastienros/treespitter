@@ -15,6 +15,7 @@ namespace TreeSpitter.Benchmarks;
 public class NativeComparisonBenchmarks
 {
     private Parser _parser = null!;
+    private Parser _generatedParser = null!;
     private NativeLanguage _nativeLanguage = null!;
     private NativeParser _nativeParser = null!;
     private string _text = "";
@@ -38,12 +39,20 @@ public class NativeComparisonBenchmarks
         _text = Grammars.Input(Language, Size);
         _utf8 = Encoding.UTF8.GetBytes(_text);
         _parser = new Parser(Grammars.Language(Language));
+        _generatedParser = new Parser(Grammars.GeneratedLanguage(Language));
         _nativeLanguage = new NativeLanguage(Language);
         _nativeParser = new NativeParser(_nativeLanguage);
 
         using var nativeTree = _nativeParser.Parse(_text) ?? throw new InvalidOperationException("The native parser failed.");
         var expected = nativeTree.RootNode.ToString();
-        var actual = _parser.Parse(_utf8).RootNode.ToSExpression();
+        foreach (var actual in new[] { _parser.Parse(_utf8).ToSExpression(), _generatedParser.Parse(_utf8).ToSExpression() })
+        {
+            Check(expected, actual);
+        }
+    }
+
+    private void Check(string expected, string actual)
+    {
         if (expected != actual)
         {
             var index = 0;
@@ -73,9 +82,23 @@ public class NativeComparisonBenchmarks
         using var tree = _nativeParser.Parse(_text);
     }
 
-    /// <summary>Parses the UTF-8 input with the TreeSpitter virtual machine.</summary>
+    /// <summary>Parses the UTF-8 input with the TreeSpitter virtual machine, and disposes the tree like the native benchmark.</summary>
     [Benchmark]
-    public SyntaxTree Vm() => _parser.Parse(_utf8);
+    public void Vm()
+    {
+        using var tree = _parser.Parse(_utf8);
+    }
+
+    /// <summary>Parses the UTF-8 input with the source-generated TreeSpitter parser, and disposes the tree.</summary>
+    [Benchmark]
+    public void Generated()
+    {
+        using var tree = _generatedParser.Parse(_utf8);
+    }
+
+    /// <summary>Parses the UTF-8 input with the TreeSpitter virtual machine, without disposing the tree.</summary>
+    [Benchmark]
+    public SyntaxTree VmUndisposed() => _parser.Parse(_utf8);
 
     /// <summary>Parses the string with the TreeSpitter virtual machine, the UTF-8 encoding included.</summary>
     [Benchmark]

@@ -71,7 +71,11 @@ public sealed partial class Language
     private Func<Language, IParserEngine>? _engineFactory;
 
     internal IParserEngine CreateEngine() =>
-        _engineFactory is { } factory ? factory(this) : new ParserEngine<TableLexFunction>(this, new TableLexFunction(MainLexTable, KeywordLexTable));
+        _engineFactory is { } factory ? factory(this) : new ParserEngine<TableLexFunction>(this, TableLexFunction);
+
+    /// <summary>Gets the table-driven lex function of the language, which runs its lex automata.</summary>
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Advanced)]
+    public TableLexFunction TableLexFunction => new(MainLexTable, KeywordLexTable);
 
     /// <summary>
     /// Uses a lex function instead of the lex automata of the language, typically a generated lexer. The parse
@@ -96,7 +100,7 @@ public sealed partial class Language
         }
 
         var grammar = path.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
-            ? GrammarConverter.FromJsonFile(path)
+            ? GrammarJsonReader.Read(File.ReadAllText(path))
             : new GrammarEvaluator().EvaluateFile(path);
         return LanguageCompiler.Compile(grammar);
     }

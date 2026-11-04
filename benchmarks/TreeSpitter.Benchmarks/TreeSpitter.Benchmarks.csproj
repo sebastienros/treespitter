@@ -9,5 +9,6 @@
     <!-- The native tree-sitter parsers, to compare with (NativeComparisonBenchmarks). -->
     <PackageReference Include="TreeSitter.DotNet" />
     <ProjectReference Include="../../src/TreeSpitter/TreeSpitter.csproj" />
+    <ProjectReference Include="../../src/TreeSpitter.Languages/TreeSpitter.Languages.csproj" />
   </ItemGroup>
 </Project>

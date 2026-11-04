@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>netstandard2.0;net10.0</TargetFrameworks>
+    <IsPackable>true</IsPackable>
+    <Description>Precompiled TreeSpitter parsers of the tree-sitter grammars of JSON, Go, Java and C: the tables are compiled at build time and the lexers are C# code.</Description>
+    <PackageTags>tree-sitter;parser;json;go;java;c</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../TreeSpitter/TreeSpitter.csproj" />
+    <ProjectReference Include="../TreeSpitter.Generators/TreeSpitter.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <PackageReference Include="Meziantou.Polyfill" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The grammars, compiled by the source generator. -->
+    <AdditionalFiles Include="../../grammars/json/grammar.json" Link="Grammars/json/grammar.json" />
+    <AdditionalFiles Include="../../grammars/go/grammar.json" Link="Grammars/go/grammar.json" />
+    <AdditionalFiles Include="../../grammars/java/grammar.json" Link="Grammars/java/grammar.json" />
+    <AdditionalFiles Include="../../grammars/c/grammar.json" Link="Grammars/c/grammar.json" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <None Include="../../THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="licenses/THIRD-PARTY-NOTICES.txt" />
+  </ItemGroup>
+</Project>

@@ -76,19 +76,60 @@ internal sealed class SubtreeArena
     /// <summary>The input, to compute the rows spanned by error nodes.</summary>
     public LineIndex? Lines { get; set; }
 
-    public void Reset(int expectedNodes)
+    /// <summary>Arrays returned by a disposed tree, reused by the next parse.</summary>
+    private SubtreeData[]? _spareNodes;
+    private int[]? _spareChildren;
+
+    public void Reset(int expectedNodes, int expectedChildren)
     {
         Count = 1;
         ChildrenCount = 0;
         if (Nodes.Length < expectedNodes)
         {
-            Nodes = new SubtreeData[expectedNodes];
+            var spare = Interlocked.Exchange(ref _spareNodes, null);
+            Nodes = spare is not null && spare.Length >= expectedNodes ? spare : AllocateUninitialized<SubtreeData>(expectedNodes);
         }
 
-        if (Children.Length < expectedNodes)
+        if (Children.Length < expectedChildren)
         {
-            Children = new int[expectedNodes];
+            var spare = Interlocked.Exchange(ref _spareChildren, null);
+            Children = spare is not null && spare.Length >= expectedChildren ? spare : AllocateUninitialized<int>(expectedChildren);
         }
+
+        // Node 0 is "no node"
+        Nodes[0] = default;
+    }
+
+    /// <summary>Gives the arrays to a tree: the next parse uses other arrays.</summary>
+    public (SubtreeData[] Nodes, int[] Children) Detach()
+    {
+        var result = (Nodes, Children);
+        Nodes = Interlocked.Exchange(ref _spareNodes, null) ?? [];
+        Children = Interlocked.Exchange(ref _spareChildren, null) ?? [];
+        return result;
+    }
+
+    /// <summary>Takes back the arrays of a disposed tree.</summary>
+    public void Return(SubtreeData[] nodes, int[] children)
+    {
+        if (_spareNodes is null || _spareNodes.Length < nodes.Length)
+        {
+            Volatile.Write(ref _spareNodes, nodes);
+        }
+
+        if (_spareChildren is null || _spareChildren.Length < children.Length)
+        {
+            Volatile.Write(ref _spareChildren, children);
+        }
+    }
+
+    private static T[] AllocateUninitialized<T>(int length)
+    {
+#if NET
+        return GC.AllocateUninitializedArray<T>(length);
+#else
+        return new T[length];
+#endif
     }
 
     public ref SubtreeData this[int index]
