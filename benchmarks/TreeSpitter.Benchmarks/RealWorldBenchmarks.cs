@@ -44,8 +44,7 @@ public class RealWorldBenchmarks
         _nativeLanguage = new NativeLanguage(language);
         _nativeParser = new NativeParser(_nativeLanguage);
         _nativeUtf8Parser = new NativeUtf8Parser(language);
-        using var tree = _parser.Parse(_utf8);
-        if (tree.ToSExpression() != _nativeUtf8Parser.ToSExpression(_utf8))
+        if (Grammars.As026(() => { using var tree = _parser.Parse(_utf8); return tree.ToSExpression(); }) != _nativeUtf8Parser.ToSExpression(_utf8))
         {
             throw new InvalidOperationException($"The trees of {File} differ.");
         }

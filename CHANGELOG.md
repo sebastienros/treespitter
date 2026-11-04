@@ -28,6 +28,18 @@ releases are `v*.*.*` tags, see [docs/release.md](docs/release.md).
 - `Corpus`: reads and runs tree-sitter corpus tests (`test/corpus/*.txt`).
 - `treespitter` command line tool (`grammar`, `info`, `compile`, `generate`, `parse`, `test`).
 
+### Changed
+
+- The generator and the runtime are ports of tree-sitter v0.27.1 (from v0.25.10): identical reductions aren't
+  conflicts, right associativity wins mixed precedence ties, the indirect recursion check runs on the flattened
+  productions, unused rules are the ones unreachable from the start rule, the word rule, the extras, the externals and
+  the reserved words, `token.immediate` content is a token, inlined supertypes are dropped and terminal supertypes
+  rejected, unnecessary conflicts are reported; the error recovery orders the candidate reductions like tree-sitter's
+  lookahead iterator, continues the recovery of invalid lookaheads in the error state, nests error repetitions and
+  refunds their extent cost. The language format is version 2 (the lookahead order of the small states).
+- Regular expressions use Unicode simple case folding for the `i` flag, fold the leaves of a class before the
+  negations, negate `\p{name!=value}` and reject non-ASCII byte classes in `(?-u:...)`.
+
 ### Fixed
 
 - The state minimization checks the end of the input for token conflicts like tree-sitter (as the token of index 0):

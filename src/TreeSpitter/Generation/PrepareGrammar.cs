@@ -37,34 +37,51 @@ internal static class GrammarPreparer
     {
         var input = InputGrammarReader.Read(grammar, warnings);
         ValidatePrecedences(input);
-        ValidateIndirectRecursion(input);
 
-        var interned = SymbolInterner.Intern(input);
+        var interned = SymbolInterner.Intern(input, warnings);
         var (syntax, lexical) = TokenExtractor.Extract(interned);
         RepeatExpander.Expand(syntax);
         var syntaxGrammar = GrammarFlattener.Flatten(syntax);
+        ValidateIndirectRecursion(syntaxGrammar);
         var lexicalGrammar = TokenExpander.Expand(lexical);
         var defaultAliases = DefaultAliasExtractor.Extract(syntaxGrammar, lexicalGrammar);
         var inlines = InlineProcessor.Process(syntaxGrammar, lexicalGrammar);
         return new PreparedGrammar(syntaxGrammar, lexicalGrammar, inlines, defaultAliases, input.Name);
     }
 
-    private static void ValidateIndirectRecursion(InputGrammar grammar)
+    /// <summary>
+    /// Checks that no rule derives itself through a chain of productions of a single non-terminal, which would loop
+    /// while parsing. Like tree-sitter 0.27, the check runs on the flattened productions (repetitions included).
+    /// </summary>
+    private static void ValidateIndirectRecursion(SyntaxGrammar grammar)
     {
-        var transitions = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
+        var transitions = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         var order = new List<string>();
+        var indices = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < grammar.Variables.Count; i++)
+        {
+            indices[grammar.Variables[i].Name] = i;
+        }
+
         foreach (var variable in grammar.Variables)
         {
-            var productions = new SortedSet<string>(StringComparer.Ordinal);
-            SingleSymbolProductions(variable.Rule, productions);
-            productions.Remove(variable.Name);
-            transitions[variable.Name] = productions;
+            var symbols = new SortedSet<int>();
+            foreach (var production in variable.Productions)
+            {
+                if (production.Steps.Count == 1 && production.Steps[0].Symbol.IsNonTerminal)
+                {
+                    symbols.Add(production.Steps[0].Symbol.Index);
+                }
+            }
+
+            // Rules referencing themselves directly don't loop
+            transitions[variable.Name] = symbols.Select(s => grammar.Variables[s].Name).Where(n => n != variable.Name).ToList();
             order.Add(variable.Name);
         }
 
+        var visited = new HashSet<string>(StringComparer.Ordinal);
         foreach (var start in order)
         {
-            var visited = new HashSet<string>(StringComparer.Ordinal);
             var path = new List<string>();
             var cycle = GetCycle(start, transitions, visited, path);
             if (cycle is { } c)
@@ -73,27 +90,7 @@ internal static class GrammarPreparer
             }
         }
 
-        static void SingleSymbolProductions(IRule rule, SortedSet<string> result)
-        {
-            switch (rule)
-            {
-                case NamedSymbolIRule named:
-                    result.Add(named.Name);
-                    break;
-                case ChoiceIRule choice:
-                    foreach (var element in choice.Elements)
-                    {
-                        SingleSymbolProductions(element, result);
-                    }
-
-                    break;
-                case MetadataIRule metadata:
-                    SingleSymbolProductions(metadata.Rule, result);
-                    break;
-            }
-        }
-
-        static (int Start, int End)? GetCycle(string current, Dictionary<string, SortedSet<string>> transitions, HashSet<string> visited, List<string> path)
+        static (int Start, int End)? GetCycle(string current, Dictionary<string, List<string>> transitions, HashSet<string> visited, List<string> path)
         {
             var firstIndex = path.IndexOf(current);
             if (firstIndex >= 0)
@@ -244,11 +241,59 @@ internal static class InputGrammarReader
         var conflicts = grammar.Conflicts.Select(c => c.ToList()).ToList();
         var supertypes = grammar.Supertypes.ToList();
         var inline = grammar.Inline.ToList();
+        var reservedSets = grammar.Reserved.Select(set => new ReservedWordContext<IRule>(set.Name, set.Rules.Select(r => ParseRule(r, false, warnings)).ToList())).ToList();
 
-        var inProgress = new HashSet<string>(StringComparer.Ordinal);
+        // tree-sitter 0.27's normalize: the used rules are the ones reachable from the start rule, the word rule, the
+        // extras, the externals and the reserved words
+        var rulesByName = new Dictionary<string, IRule>(StringComparer.Ordinal);
         foreach (var (name, rule) in rules)
         {
-            if (grammar.Word != name && !VariableIsUsed(rules, extras, externals, name, inProgress))
+            rulesByName.TryAdd(name, rule);
+        }
+
+        var used = new HashSet<string>(StringComparer.Ordinal);
+        var stack = new List<string>();
+        if (rules.Count > 0)
+        {
+            stack.Add(rules[0].Name);
+        }
+
+        if (grammar.Word is { } word)
+        {
+            stack.Add(word);
+        }
+
+        foreach (var extra in extras)
+        {
+            CollectReferencedNames(extra, false, stack);
+        }
+
+        foreach (var external in externals)
+        {
+            CollectReferencedNames(external, true, stack);
+        }
+
+        foreach (var set in reservedSets)
+        {
+            foreach (var reservedWord in set.ReservedWords)
+            {
+                CollectReferencedNames(reservedWord, false, stack);
+            }
+        }
+
+        while (stack.Count > 0)
+        {
+            var name = stack[stack.Count - 1];
+            stack.RemoveAt(stack.Count - 1);
+            if (used.Add(name) && rulesByName.TryGetValue(name, out var rule))
+            {
+                CollectReferencedNames(rule, false, stack);
+            }
+        }
+
+        foreach (var (name, rule) in rules)
+        {
+            if (!used.Contains(name))
             {
                 conflicts.RemoveAll(c => c.Contains(name));
                 supertypes.RemoveAll(s => s == name);
@@ -256,17 +301,25 @@ internal static class InputGrammarReader
                 extras.RemoveAll(r => RuleIsReferenced(r, name, true));
                 externals.RemoveAll(r => RuleIsReferenced(r, name, true));
                 precedenceOrderings.RemoveAll(o => o.Any(e => e.IsSymbol && e.Value == name));
+
+                // The context of reserved words is kept: an empty context is meaningful
+                foreach (var set in reservedSets)
+                {
+                    set.ReservedWords.RemoveAll(r => RuleIsReferenced(r, name, false));
+                }
+
                 continue;
+            }
+
+            if (warnings is not null && extras.Any(r => RuleIsReferenced(r, name, false)) && MatchesEmptyString(rule is MetadataIRule metadata ? metadata.Rule : rule))
+            {
+                warnings.Add($"named extra rule `{name}` matches the empty string. inline this to avoid infinite loops while parsing.");
             }
 
             result.Variables.Add(new Variable(name, VariableType.Named, rule));
         }
 
-        foreach (var set in grammar.Reserved)
-        {
-            result.ReservedWords.Add(new ReservedWordContext<IRule>(set.Name, set.Rules.Select(r => ParseRule(r, false, warnings)).ToList()));
-        }
-
+        result.ReservedWords.AddRange(reservedSets);
         result.ExtraSymbols = extras;
         result.ExternalTokens = externals;
         result.PrecedenceOrderings = precedenceOrderings;
@@ -274,6 +327,79 @@ internal static class InputGrammarReader
         result.SupertypeSymbols = supertypes;
         result.VariablesToInline = inline;
         return result;
+    }
+
+    /// <summary>Whether a string or a pattern matches the empty string.</summary>
+    private static bool MatchesEmptyString(IRule rule)
+    {
+        switch (rule)
+        {
+            case StringIRule s:
+                return s.Value.Length == 0;
+            case PatternIRule pattern:
+                try
+                {
+                    return IsNullable(Lexing.RegexParser.Parse(pattern.Value, pattern.Flags));
+                }
+                catch (Lexing.RegexParseException)
+                {
+                    return false;
+                }
+
+            default:
+                return false;
+        }
+
+        static bool IsNullable(Lexing.RegexNode node) => node switch
+        {
+            Lexing.RegexEmpty => true,
+            Lexing.RegexLiteral literal => literal.CodePoints.Length == 0,
+            Lexing.RegexRepeat repeat => repeat.Min == 0 || IsNullable(repeat.Content),
+            Lexing.RegexConcat concat => concat.Items.All(IsNullable),
+            Lexing.RegexAlternation alternation => alternation.Alternatives.Any(IsNullable),
+            _ => false,
+        };
+    }
+
+    /// <summary>
+    /// Adds the names referenced by a rule, tree-sitter's <c>collect_referenced_ids</c>: an external names itself, its
+    /// top-level symbol isn't a reference.
+    /// </summary>
+    private static void CollectReferencedNames(IRule rule, bool skipTopLevel, List<string> names)
+    {
+        switch (rule)
+        {
+            case NamedSymbolIRule named:
+                if (!skipTopLevel)
+                {
+                    names.Add(named.Name);
+                }
+
+                break;
+            case ChoiceIRule choice:
+                foreach (var element in choice.Elements)
+                {
+                    CollectReferencedNames(element, false, names);
+                }
+
+                break;
+            case SeqIRule seq:
+                foreach (var element in seq.Elements)
+                {
+                    CollectReferencedNames(element, false, names);
+                }
+
+                break;
+            case MetadataIRule metadata:
+                CollectReferencedNames(metadata.Rule, skipTopLevel, names);
+                break;
+            case ReservedIRule reserved:
+                CollectReferencedNames(reserved.Rule, skipTopLevel, names);
+                break;
+            case RepeatIRule repeat:
+                CollectReferencedNames(repeat.Content, false, names);
+                break;
+        }
     }
 
     private static bool RuleIsReferenced(IRule rule, string target, bool isExternal) => rule switch
@@ -286,48 +412,6 @@ internal static class InputGrammarReader
         RepeatIRule repeat => RuleIsReferenced(repeat.Content, target, false),
         _ => false,
     };
-
-    private static bool VariableIsUsed(List<(string Name, IRule Rule)> rules, List<IRule> extras, List<IRule> externals, string targetName, HashSet<string> inProgress)
-    {
-        if (targetName == rules[0].Name)
-        {
-            return true;
-        }
-
-        if (extras.Any(r => RuleIsReferenced(r, targetName, false)))
-        {
-            return true;
-        }
-
-        if (externals.Any(r => RuleIsReferenced(r, targetName, true)))
-        {
-            return true;
-        }
-
-        inProgress.Add(targetName);
-        var result = false;
-        foreach (var (name, rule) in rules)
-        {
-            if (name == targetName)
-            {
-                continue;
-            }
-
-            if (!RuleIsReferenced(rule, targetName, false) || inProgress.Contains(name))
-            {
-                continue;
-            }
-
-            if (VariableIsUsed(rules, extras, externals, name, inProgress))
-            {
-                result = true;
-                break;
-            }
-        }
-
-        inProgress.Remove(targetName);
-        return result;
-    }
 
     private static Precedence ToPrecedence(PrecedenceValue value) =>
         value.IsNamed ? Precedence.Named(value.Name!) : Precedence.Integer(value.Number);
@@ -392,11 +476,14 @@ internal static class InputGrammarReader
             case ReservedRule r:
                 return new ReservedIRule(ParseRule(r.Content, isToken, warnings), r.ContextName);
             case TokenRule t when t.Immediate:
-                return IRule.ImmediateToken(ParseRule(t.Content, isToken, warnings));
+                // Like tree-sitter 0.27, the content of an immediate token is parsed as a token
+                return IRule.ImmediateToken(ParseRule(t.Content, true, warnings));
             case TokenRule t:
                 return IRule.Token(ParseRule(t.Content, true, warnings));
             default:
-                throw new GrammarException($"Unsupported rule {rule}");
+                throw new GrammarException(rule is EofRule
+                    ? "The eof() rule of tree-sitter 0.27 isn't supported yet."
+                    : $"Unsupported rule {rule}");
         }
     }
 }
@@ -432,7 +519,7 @@ internal sealed class ExtractedLexicalGrammar(List<Variable> variables, List<IRu
 
 internal static class SymbolInterner
 {
-    public static IntermediateGrammar<IRule, Variable> Intern(InputGrammar grammar)
+    public static IntermediateGrammar<IRule, Variable> Intern(InputGrammar grammar, List<string>? warnings = null)
     {
         if (grammar.Variables.Count == 0)
         {
@@ -484,6 +571,23 @@ internal static class SymbolInterner
                 result.VariablesToInline.Add(symbol);
             }
         }
+
+        // tree-sitter 0.27: an inlined rule never produces nodes, its supertype entry is dropped
+        var supertypes = new List<Symbol>();
+        for (var i = 0; i < result.SupertypeSymbols.Count; i++)
+        {
+            if (result.VariablesToInline.Contains(result.SupertypeSymbols[i]))
+            {
+                warnings?.Add($"rule `{grammar.SupertypeSymbols[i]}` is both a supertype and inlined. the supertype is ignored.");
+            }
+            else
+            {
+                supertypes.Add(result.SupertypeSymbols[i]);
+            }
+        }
+
+        result.SupertypeSymbols.Clear();
+        result.SupertypeSymbols.AddRange(supertypes);
 
         if (grammar.WordToken is { } word)
         {
@@ -599,7 +703,12 @@ internal sealed class TokenExtractor
                 symbols.Sort();
                 return symbols;
             }).ToList(),
-            SupertypeSymbols = grammar.SupertypeSymbols.Select(replacer.ReplaceSymbol).ToList(),
+            SupertypeSymbols = grammar.SupertypeSymbols.Select(s =>
+            {
+                // A supertype absorbed into a token isn't allowed
+                var symbol = replacer.ReplaceSymbol(s);
+                return symbol.IsTerminal ? throw new GrammarException($"Terminal rule '{lexicalVariables[symbol.Index].Name}' cannot be used as a supertype") : symbol;
+            }).ToList(),
             VariablesToInline = grammar.VariablesToInline.Select(replacer.ReplaceSymbol).ToList(),
             PrecedenceOrderings = grammar.PrecedenceOrderings,
         };
@@ -897,6 +1006,11 @@ internal sealed class GrammarFlattener
 
     public static SyntaxGrammar Flatten(IntermediateGrammar<Symbol, ExternalToken> grammar)
     {
+        if (grammar.ReservedWordSets.Count > ushort.MaxValue)
+        {
+            throw new GrammarException($"Reserved word set count {grammar.ReservedWordSets.Count} exceeds the maximum of {ushort.MaxValue}");
+        }
+
         var reservedIds = new Dictionary<string, int>(StringComparer.Ordinal);
         for (var i = 0; i < grammar.ReservedWordSets.Count; i++)
         {
@@ -1218,13 +1332,24 @@ internal sealed class TokenExpander
             case ChoiceIRule choice:
                 {
                     var alternatives = new List<int>();
+                    var didExpand = false;
                     foreach (var element in choice.Elements)
                     {
-                        alternatives.Add(ExpandRule(element, nextStateId) ? _nfa.LastStateId : nextStateId);
+                        if (ExpandRule(element, nextStateId))
+                        {
+                            didExpand = true;
+                            alternatives.Add(_nfa.LastStateId);
+                        }
+                        else
+                        {
+                            alternatives.Add(nextStateId);
+                        }
                     }
 
                     PushSplits(alternatives);
-                    return true;
+
+                    // tree-sitter 0.27: a choice of empty alternatives produces nothing
+                    return didExpand;
                 }
 
             case SeqIRule seq:
@@ -1253,6 +1378,8 @@ internal sealed class TokenExpander
                         return true;
                     }
 
+                    // tree-sitter 0.27 removes the placeholder of a repetition of nothing
+                    _nfa.States.RemoveAt(_nfa.States.Count - 1);
                     return false;
                 }
 

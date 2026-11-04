@@ -97,7 +97,7 @@ public static class GrammarConverter
             Inherits = ToStringValue(grammar.Get("inherits"), "inherits"),
             Word = ToStringValue(grammar.Get("word"), "word"),
             Rules = rules,
-            Extras = grammar.Get("extras").IsUndefined() ? [new PatternRule("\\s")] : ToRules(grammar.Get("extras"), "extras"),
+            Extras = grammar.Get("extras").IsUndefined() ? [] : ToRules(grammar.Get("extras"), "extras"),
             Conflicts = conflicts,
             Precedences = precedences,
             Externals = ToRules(grammar.Get("externals"), "externals"),

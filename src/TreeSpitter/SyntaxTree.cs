@@ -96,7 +96,11 @@ public sealed class SyntaxTree : IDisposable
     {
         if (_unbalancedFrom >= 0)
         {
-            Root = Arena.Balance(Root, _unbalancedFrom);
+            // The input of the tree, for the rows of the error repetitions summarized again
+            var arena = Arena;
+            arena.SetInput(_input, Input.Length);
+            Root = arena.Balance(Root, _unbalancedFrom);
+            arena.SetInput(null, 0);
             _unbalancedFrom = -1;
         }
     }

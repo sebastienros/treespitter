@@ -61,16 +61,21 @@ public class IncrementalBenchmarks
         _nativeTree = _native.ParseTree(_original, null);
 
         // Two edits each, both ways: the incremental trees are the fresh ones, and the native ones
-        for (var i = 0; i < 4; i++)
+        Grammars.As026(() =>
         {
-            Incremental();
-            NativeIncremental();
-            var input = _treeIsEdited ? _edited : _original;
-            if (_tree.ToSExpression() != _parser.Parse(input).ToSExpression() || _tree.ToSExpression() != _nativeTree.ToSExpression())
+            for (var i = 0; i < 4; i++)
             {
-                throw new InvalidOperationException($"The incremental {Language} trees differ.");
+                Incremental();
+                NativeIncremental();
+                var input = _treeIsEdited ? _edited : _original;
+                if (_tree.ToSExpression() != _parser.Parse(input).ToSExpression() || _tree.ToSExpression() != _nativeTree.ToSExpression())
+                {
+                    throw new InvalidOperationException($"The incremental {Language} trees differ.");
+                }
             }
-        }
+
+            return 0;
+        });
     }
 
     /// <summary>Releases the trees and the native parser.</summary>

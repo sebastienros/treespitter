@@ -6,7 +6,7 @@ namespace TreeSpitter;
 public sealed partial class Language
 {
     private const uint Magic = 0x4C505354; // "TSPL"
-    private const int FormatVersion = 1;
+    private const int FormatVersion = 2;
 
     /// <summary>
     /// Serializes the language to its binary format: the parse table, the lexer automata and the metadata, compressed.
@@ -66,6 +66,15 @@ public sealed partial class Language
             {
                 writer.Write(value);
             }
+
+            writer.Write(LargeStateCount);
+            writer.Write(LookaheadOrderStarts.Length);
+            foreach (var value in LookaheadOrderStarts)
+            {
+                writer.Write(value);
+            }
+
+            WriteUShorts(writer, LookaheadOrder);
         }
 
         return output.ToArray();
@@ -147,6 +156,11 @@ public sealed partial class Language
         }
 
         language.ExternalScannerStates = states;
+        language.LargeStateCount = reader.ReadInt32();
+        var starts = new int[reader.ReadInt32()];
+        ReadBulk(reader, starts, sizeof(int));
+        language.LookaheadOrderStarts = starts;
+        language.LookaheadOrder = ReadUShorts(reader);
         return language;
     }
 

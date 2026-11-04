@@ -974,7 +974,6 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
         var initialVersionCount = _stack.VersionCount;
         var canShiftLookaheadSymbol = false;
         var version = startingVersion;
-        var actions = _actions;
         for (var i = 0; ; i++)
         {
             var versionCount = _stack.VersionCount;
@@ -1002,55 +1001,50 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
             var hasShiftAction = false;
             _reduceActions.Clear();
 
-            int firstSymbol, endSymbol;
             if (lookaheadSymbol != 0)
             {
-                firstSymbol = lookaheadSymbol;
-                endSymbol = lookaheadSymbol + 1;
+                hasShiftAction = AddCandidateRecoveryActions(state, lookaheadSymbol);
             }
             else
             {
-                firstSymbol = 1;
-                endSymbol = _language.TokenCount;
-            }
-
-            for (var symbol = firstSymbol; symbol < endSymbol; symbol++)
-            {
-                var index = _language.TableEntry(state, (ushort)symbol, out var count, out _);
-                for (var j = 0; j < count; j++)
+                var language = _language;
+                if (Compatibility.TreeSitter026 || state < language.LargeStateCount)
                 {
-                    var action = actions[index + j];
-                    switch (action.Type)
+                    // The lookaheads by symbol: tree-sitter 0.26 scans the terminals, the lookahead iterator of 0.27
+                    // visits the large states by symbol
+                    for (var symbol = 1; symbol < language.TokenCount; symbol++)
                     {
-                        case ParseActionType.Shift:
-                        case ParseActionType.Recover:
-                            if (!action.IsExtra && !action.IsRepetition)
-                            {
-                                hasShiftAction = true;
-                            }
+                        hasShiftAction |= AddCandidateRecoveryActions(state, (ushort)symbol);
+                    }
+                }
+                else
+                {
+                    // The lookaheads of a small state in the order of the lookahead iterator of 0.27
+                    var order = language.LookaheadOrder;
+                    for (int k = language.LookaheadOrderStarts[state], end = language.LookaheadOrderStarts[state + 1]; k < end; k++)
+                    {
+                        var symbol = order[k];
+                        if (symbol != Language.EndSymbol && symbol < language.TokenCount)
+                        {
+                            hasShiftAction |= AddCandidateRecoveryActions(state, symbol);
+                        }
+                    }
+                }
 
-                            break;
-                        case ParseActionType.Reduce:
-                            if (action.ChildCount > 0)
-                            {
-                                var reduce = (action.StateOrSymbol, action.ChildCount, action.DynamicPrecedence, action.ProductionId);
-                                var exists = false;
-                                foreach (var existing in _reduceActions)
-                                {
-                                    if (existing.Symbol == reduce.StateOrSymbol && existing.Count == reduce.ChildCount)
-                                    {
-                                        exists = true;
-                                        break;
-                                    }
-                                }
+                if (!Compatibility.TreeSitter026)
+                {
+                    // tree-sitter 0.27 sorts the reductions by symbol, descending, with a stable insertion sort
+                    for (var j = 1; j < _reduceActions.Count; j++)
+                    {
+                        var key = _reduceActions[j];
+                        var k = j - 1;
+                        while (k >= 0 && _reduceActions[k].Symbol < key.Symbol)
+                        {
+                            _reduceActions[k + 1] = _reduceActions[k];
+                            k--;
+                        }
 
-                                if (!exists)
-                                {
-                                    _reduceActions.Add(reduce);
-                                }
-                            }
-
-                            break;
+                        _reduceActions[k + 1] = key;
                     }
                 }
             }
@@ -1074,6 +1068,12 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
             else if (lookaheadSymbol != 0)
             {
                 _stack.RemoveVersion(version);
+
+                // tree-sitter 0.27: the next version took the slot of the removed one, it's processed next
+                if (!Compatibility.TreeSitter026)
+                {
+                    continue;
+                }
             }
 
             if (version == startingVersion)
@@ -1087,6 +1087,54 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
         }
 
         return canShiftLookaheadSymbol;
+    }
+
+    /// <summary>
+    /// Adds the reductions of a lookahead to the candidate recovery actions, tree-sitter's
+    /// <c>ts_parser__process_candidate_recovery_actions</c>. Returns whether the lookahead can be shifted.
+    /// </summary>
+    private bool AddCandidateRecoveryActions(ushort state, ushort symbol)
+    {
+        var actions = _actions;
+        var hasShiftAction = false;
+        var index = _language.TableEntry(state, symbol, out var count, out _);
+        for (var j = 0; j < count; j++)
+        {
+            var action = actions[index + j];
+            switch (action.Type)
+            {
+                case ParseActionType.Shift:
+                case ParseActionType.Recover:
+                    if (!action.IsExtra && !action.IsRepetition)
+                    {
+                        hasShiftAction = true;
+                    }
+
+                    break;
+                case ParseActionType.Reduce:
+                    if (action.ChildCount > 0)
+                    {
+                        var exists = false;
+                        foreach (var existing in _reduceActions)
+                        {
+                            if (existing.Symbol == action.StateOrSymbol && existing.Count == action.ChildCount)
+                            {
+                                exists = true;
+                                break;
+                            }
+                        }
+
+                        if (!exists)
+                        {
+                            _reduceActions.Add((action.StateOrSymbol, action.ChildCount, action.DynamicPrecedence, action.ProductionId));
+                        }
+                    }
+
+                    break;
+            }
+        }
+
+        return hasShiftAction;
     }
 
     private bool RecoverToState(int version, int depth, ushort goalState)
@@ -1120,7 +1168,19 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                 ref var errorData = ref _arena[errorTree];
                 if (errorData.ChildCount > 0)
                 {
-                    slice.Subtrees.InsertRange(0, _arena.Children, errorData.FirstChild, errorData.ChildCount);
+                    if (Compatibility.TreeSitter026)
+                    {
+                        slice.Subtrees.InsertRange(0, _arena.Children, errorData.FirstChild, errorData.ChildCount);
+                    }
+                    else
+                    {
+                        // tree-sitter 0.27 nests the children of the error in a repetition, instead of splicing them
+                        // again at each recovery
+                        var first = _arena.ReserveChildren(errorData.ChildCount);
+                        Array.Copy(_arena.Children, _arena[errorTree].FirstChild, _arena.Children, first, _arena[errorTree].ChildCount);
+                        var nested = _arena.NewNode(Language.ErrorRepeatSymbol, first, _arena[errorTree].ChildCount, 0, _stack.Position(slice.Version));
+                        slice.Subtrees.Insert(0, nested);
+                    }
                 }
             }
 
@@ -1318,7 +1378,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                     if (_language.HasReduceAction(stateAfterMissingSymbol, _arena.LeafSymbol(lookahead)))
                     {
                         var versionWithMissingTree = _stack.CopyVersion(v);
-                        var missingTree = _arena.NewMissingLeaf((ushort)missingSymbol, _arena.TotalBytes(lookahead) + _arena[lookahead].LookaheadBytes);
+                        var missingTree = _arena.NewMissingLeaf((ushort)missingSymbol, _arena.TotalBytes(lookahead) + _arena[lookahead].LookaheadBytes, Compatibility.TreeSitter026 ? (ushort)0 : state);
                         _stack.Push(versionWithMissingTree, missingTree, false, stateAfterMissingSymbol);
                         if (DoAllPotentialReductions(versionWithMissingTree, _arena.LeafSymbol(lookahead)))
                         {
@@ -1515,6 +1575,13 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                     lookahead = _arena.WithSymbol(lookahead, language.KeywordCaptureToken);
                     continue;
                 }
+            }
+
+            // tree-sitter 0.27: an invalid lookahead in the error state continues the error recovery
+            if (state == Language.ErrorState && !Compatibility.TreeSitter026)
+            {
+                Recover(version, lookahead);
+                return;
             }
 
             if (BreakdownTopOfStack(version))

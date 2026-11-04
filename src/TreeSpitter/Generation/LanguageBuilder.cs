@@ -282,6 +282,23 @@ internal sealed class LanguageBuilder(PreparedGrammar grammar, Tables tables)
         // Action list 0 is the empty list
         ListId(new ParseTableEntry { Actions = [], Reusable = false });
 
+        // Like render.rs: the first states and the states with many entries are "large" (a row of the parse table),
+        // the others are "small" (lists of the lookaheads grouped by action list)
+        var threshold = Math.Min(64, symbolCount / 2);
+        var largeStateCount = 0;
+        while (largeStateCount < states.Count &&
+            (largeStateCount <= 1 || states[largeStateCount].TerminalEntries.Count + states[largeStateCount].NonTerminalEntries.Count > threshold))
+        {
+            largeStateCount++;
+        }
+
+        // The order in which tree-sitter's lookahead iterator visits the lookaheads of the small states, which the
+        // error recovery depends on: the groups of lookaheads sharing an action list, by size then offset of the list,
+        // and the symbols of a group in the order of the generator. The action lists are numbered in the order of
+        // render.rs (the entries of each state by symbol id) so that their offsets are the ones of a parser.c.
+        var lookaheadOrderStarts = new int[states.Count + 1];
+        var lookaheadOrder = new List<ushort>();
+        var groups = new Dictionary<int, List<Symbol>>();
         for (var i = 0; i < states.Count; i++)
         {
             var state = states[i];
@@ -290,16 +307,43 @@ internal sealed class LanguageBuilder(PreparedGrammar grammar, Tables tables)
                 table[i * symbolCount + _symbolIds[symbol]] = (ushort)(action.IsShiftExtra ? i : action.State);
             }
 
-            foreach (var (symbol, entry) in state.TerminalEntries.Entries)
+            groups.Clear();
+            // The end of a non-terminal extra has no symbol order in render.rs: it comes first
+            foreach (var (symbol, entry) in state.TerminalEntries.Entries.OrderBy(e => e.Key == Symbol.EndOfNonTerminalExtra ? -1 : _symbolIds[e.Key]))
             {
                 var id = ListId(entry);
-                if (id > ushort.MaxValue)
+                table[i * symbolCount + _symbolIds[symbol]] = (ushort)id;
+                if (!groups.TryGetValue(id, out var group))
                 {
-                    throw new GrammarException("The parse table is too large.");
+                    groups[id] = group = [];
                 }
 
-                table[i * symbolCount + _symbolIds[symbol]] = (ushort)id;
+                group.Add(symbol);
             }
+
+            lookaheadOrderStarts[i] = lookaheadOrder.Count;
+            if (i >= largeStateCount)
+            {
+                foreach (var (_, group) in groups.OrderBy(g => g.Value.Count).ThenBy(g => g.Key))
+                {
+                    group.Sort();
+                    foreach (var symbol in group)
+                    {
+                        lookaheadOrder.Add(_symbolIds[symbol]);
+                    }
+                }
+            }
+        }
+
+        lookaheadOrderStarts[states.Count] = lookaheadOrder.Count;
+        language.LargeStateCount = largeStateCount;
+        language.LookaheadOrderStarts = lookaheadOrderStarts;
+        language.LookaheadOrder = [.. lookaheadOrder];
+
+        // Like render.rs: the action lists are indexed with 16 bits
+        if (actions.Count >= ushort.MaxValue)
+        {
+            throw new GrammarException($"Parse table action count {actions.Count} exceeds maximum value of {ushort.MaxValue}");
         }
 
         language.ParseTable = table;

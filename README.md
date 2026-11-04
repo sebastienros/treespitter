@@ -190,8 +190,9 @@ treespitter test <grammar> <corpus> [-v] [--filter text]          runs tree-sitt
 The whole DSL is supported: `seq`, `choice`, `optional`, `repeat`, `repeat1`, `prec` (`left`, `right`, `dynamic`,
 named `precedences`), `token`, `token.immediate`, `alias`, `field`, `extras`, `word`, `inline`, `supertypes`,
 `conflicts`, `reserved`, and grammars extending other grammars through `require` or `import`. The generator is a port
-of `tree-sitter generate` v0.25.10 and reports the same errors (unresolved conflicts, empty rules, ...). The parse
-tables have the states of the `parser.c` files of the grammars.
+of `tree-sitter generate` v0.27.1 and reports the same errors (unresolved conflicts, empty rules, ...), and the parser is a
+port of the v0.27.1 runtime. The parse tables have the states of the `parser.c` files of the grammars. The `eof()` rule
+of 0.27 isn't supported yet.
 
 | Grammar | Corpus tests passing | Parse states | Lex states |
 | --- | ---: | ---: | ---: |

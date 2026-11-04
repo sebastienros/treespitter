@@ -1,7 +1,7 @@
 # TreeSpitter repository instructions
 
 - Read [docs/design.md](docs/design.md) before changing the generator or the parser. The reference semantics are
-  tree-sitter's: `src/TreeSpitter/Generation` is a port of `tree-sitter generate` (v0.25.10, `cli/generate`), the parser
+  tree-sitter's: `src/TreeSpitter/Generation` is a port of `tree-sitter generate` (v0.27.1, `crates/generate`), the parser
   runtime is a port of `lib/src/parser.c`, `stack.c` and `subtree.c`, and the trees must match the grammars' corpus
   tests and the native parsers. When in doubt, compare with the tree-sitter sources rather than guessing, and keep the
   port close to them (same order of operations, same names), so the two can be diffed.

@@ -103,6 +103,29 @@ internal sealed class ParseTableBuilder
             AddActions([.. _parseStateInfoById[entry.StateId].PrecedingSymbols], entry.PrecedingAuxiliarySymbols, entry.StateId, itemSet);
         }
 
+        // The declared conflicts which didn't occur, sorted like tree-sitter 0.27
+        if (_actualConflicts.Count > 0)
+        {
+            var conflicts = _syntaxGrammar.ExpectedConflicts
+                .Where(c => _actualConflicts.Remove(ConflictKey(c)))
+                .Select(c => c.Select(SymbolName).ToList())
+                .ToList();
+            conflicts.Sort((a, b) =>
+            {
+                for (var k = 0; k < Math.Min(a.Count, b.Count); k++)
+                {
+                    var c = string.CompareOrdinal(a[k], b[k]);
+                    if (c != 0)
+                    {
+                        return c;
+                    }
+                }
+
+                return a.Count.CompareTo(b.Count);
+            });
+            Warnings.Add("unnecessary conflicts:\n" + string.Join("\n", conflicts.Select(c => "  " + string.Join(", ", c.Select(name => "`" + name + "`")))));
+        }
+
         return _parseTable;
     }
 
@@ -205,8 +228,12 @@ internal sealed class ParseTableBuilder
                         }
                         else if (comparison == 0)
                         {
-                            tableEntry.Actions.Add(action);
-                            lookaheadsWithConflicts.Insert(lookahead);
+                            // Two items that reduce identically build the same tree: there is nothing to resolve
+                            if (!tableEntry.Actions.Contains(action))
+                            {
+                                tableEntry.Actions.Add(action);
+                                lookaheadsWithConflicts.Insert(lookahead);
+                            }
                         }
                         else
                         {
@@ -386,6 +413,7 @@ internal sealed class ParseTableBuilder
             }
 
             var shiftIsLess = false;
+            var shiftIsEqual = false;
             var shiftIsMore = false;
             foreach (var p in shiftPrecedence)
             {
@@ -398,6 +426,10 @@ internal sealed class ParseTableBuilder
                 {
                     shiftIsLess = true;
                 }
+                else
+                {
+                    shiftIsEqual = true;
+                }
             }
 
             if (shiftIsMore && !shiftIsLess)
@@ -406,8 +438,17 @@ internal sealed class ParseTableBuilder
             }
             else if (shiftIsLess && !shiftIsMore)
             {
-                entry.Actions.RemoveAt(entry.Actions.Count - 1);
-                conflictingItems.RemoveWhere(i => !i.IsDone);
+                // When a shift ties the purely right associative reductions while another has a lower precedence, the
+                // right associativity wins: the lower precedence interpretation doesn't force a reduction
+                if (shiftIsEqual && !reductionInfo.HasLeftAssoc && !reductionInfo.HasNonAssoc && reductionInfo.HasRightAssoc)
+                {
+                    entry.Actions.RemoveRange(0, entry.Actions.Count - 1);
+                }
+                else
+                {
+                    entry.Actions.RemoveAt(entry.Actions.Count - 1);
+                    conflictingItems.RemoveWhere(i => !i.IsDone);
+                }
             }
             else if (!shiftIsLess && !shiftIsMore)
             {
