@@ -46,6 +46,13 @@ public sealed class Lexer
     /// <summary>Gets whether the lexer is at the end of the input, like tree-sitter's <c>eof()</c>.</summary>
     public bool IsAtEnd => Position >= Length;
 
+    /// <summary>
+    /// Gets whether the lexer is at the start of an included range, for external scanners, like tree-sitter's
+    /// <c>is_at_included_range_start()</c>. The input is a single range, tree-sitter's default range from the byte 0:
+    /// this is whether the lexer is at the start of the input.
+    /// </summary>
+    public bool IsAtIncludedRangeStart => Position == 0;
+
     /// <summary>Whether an external scanner read the column, tree-sitter's <c>did_get_column</c>.</summary>
     internal bool DidGetColumn;
 

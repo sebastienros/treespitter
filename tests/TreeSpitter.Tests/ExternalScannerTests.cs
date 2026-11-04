@@ -85,6 +85,53 @@ public sealed class ExternalScannerTests
         }
     }
 
+    [Fact]
+    public void TheStartOfTheInputIsTheStartOfAnIncludedRange()
+    {
+        var language = Language.FromGrammarSource("""
+            module.exports = grammar({
+              name: 'start',
+              externals: $ => [$.start],
+              rules: {
+                source: $ => repeat(choice($.start, $.word)),
+                word: $ => /[a-z]+/,
+              },
+            });
+            """).WithExternalScanner(() => new RangeStartScanner());
+        var parser = new Parser(language);
+
+        using var leadingSpace = parser.Parse(" a b");
+        using var innerSpace = parser.Parse("a  b");
+
+        Assert.Equal("(source (start) (word) (word))", leadingSpace.ToSExpression());
+        Assert.Equal("(source (word) (word))", innerSpace.ToSExpression());
+    }
+
+    /// <summary>
+    /// A scanner whose token is a space at the start of an included range, like the line breaks of tree-sitter-ruby at
+    /// the start of the input: tree-sitter parses the whole input as one range, which starts at the byte 0.
+    /// </summary>
+    private sealed class RangeStartScanner : IExternalScanner
+    {
+        public bool Scan(Lexer lexer, ReadOnlySpan<bool> validSymbols)
+        {
+            if (!validSymbols[0] || !lexer.IsAtIncludedRangeStart || lexer.Lookahead != ' ')
+            {
+                return false;
+            }
+
+            lexer.Advance(false);
+            lexer.ResultSymbol = 0;
+            return true;
+        }
+
+        public int Serialize(Span<byte> buffer) => 0;
+
+        public void Deserialize(ReadOnlySpan<byte> state)
+        {
+        }
+    }
+
     /// <summary>
     /// A scanner which finds its token once: an empty state doesn't reset it, like the <c>inside_interpolated_string</c>
     /// of tree-sitter-python's scanner, so the state of a parse would leak to the next one with the same scanner.
