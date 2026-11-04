@@ -7,7 +7,7 @@
     <PackageVersion Include="Jint" Version="4.17.0" />
     <PackageVersion Include="Meziantou.Polyfill" Version="1.0.170" />
     <!-- The analyzers of the code of TreeSpitter.Generators, at build time only: they can be updated. -->
-    <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="5.9.0" />
     <!--
       Pinned: the Roslyn API of the TreeSpitter.Generators source generator. A generator only loads in a compiler at least
       as new as the Microsoft.CodeAnalysis it references, so this version is the oldest Visual Studio and .NET SDK in which
