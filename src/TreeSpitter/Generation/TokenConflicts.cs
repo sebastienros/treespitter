@@ -320,47 +320,76 @@ internal sealed class TokenConflictMap
     }
 }
 
+/// <summary>
+/// tree-sitter's <c>CoincidentTokenIndex</c>: the pairs of terminals that are valid in the same parse states.
+/// </summary>
+/// <remarks>
+/// tree-sitter stores the list of the states of every pair, but only asks two questions of these lists: whether a pair
+/// has a state (<c>contains</c>), and whether the word token is valid in every state of a pair (<c>states_with</c> in
+/// <c>identify_keywords</c>). The lists hold the square of the number of terminals of every state, hundreds of millions
+/// of entries for the large grammars, so both answers are stored as bit matrices instead: for each terminal, the
+/// terminals valid with it in a state, and in a state without the word token.
+/// </remarks>
 internal sealed class CoincidentTokenIndex
 {
-    private readonly List<int>[] _entries;
-    private readonly int _n;
+    private readonly int _words;
+    private readonly ulong[] _coincident;
+    private readonly ulong[]? _coincidentWithoutWordToken;
 
-    public CoincidentTokenIndex(ParseTable table, LexicalGrammar lexicalGrammar)
+    public CoincidentTokenIndex(ParseTable table, LexicalGrammar lexicalGrammar, Symbol? wordToken)
     {
-        _n = lexicalGrammar.Variables.Count;
-        _entries = new List<int>[_n * _n];
-        // The pairs of terminals of each state, a pair and its reverse having the same entry
+        var n = lexicalGrammar.Variables.Count;
+        _words = (n + 63) >> 6;
+        _coincident = new ulong[n * _words];
+        _coincidentWithoutWordToken = wordToken is { IsTerminal: true } ? new ulong[n * _words] : null;
+        var stateTerminals = new ulong[_words];
         var terminals = new List<int>();
-        for (var stateIndex = 0; stateIndex < table.States.Count; stateIndex++)
+        foreach (var state in table.States)
         {
-            var keys = table.States[stateIndex].TerminalEntries.Keys;
+            var keys = state.TerminalEntries.Keys;
+            Array.Clear(stateTerminals, 0, _words);
             terminals.Clear();
             for (var k = 0; k < keys.Count; k++)
             {
                 if (keys[k].IsTerminal)
                 {
+                    stateTerminals[keys[k].Index >> 6] |= 1UL << (keys[k].Index & 63);
                     terminals.Add(keys[k].Index);
                 }
             }
 
-            for (var i = 0; i < terminals.Count; i++)
+            var withoutWordToken = _coincidentWithoutWordToken is not null && !state.TerminalEntries.ContainsKey(wordToken!.Value);
+            foreach (var terminal in terminals)
             {
-                for (var j = i; j < terminals.Count; j++)
+                Or(_coincident, terminal, stateTerminals);
+                if (withoutWordToken)
                 {
-                    var index = Index(terminals[i], terminals[j]);
-                    var list = _entries[index] ??= [];
-                    if (list.Count == 0 || list[list.Count - 1] != stateIndex)
-                    {
-                        list.Add(stateIndex);
-                    }
+                    Or(_coincidentWithoutWordToken!, terminal, stateTerminals);
                 }
             }
         }
     }
 
-    public IReadOnlyList<int> StatesWith(Symbol a, Symbol b) => (IReadOnlyList<int>?)_entries[Index(a.Index, b.Index)] ?? [];
+    /// <summary>Whether <paramref name="a"/> and <paramref name="b"/> are valid in the same state.</summary>
+    public bool Contains(Symbol a, Symbol b) => Get(_coincident, a.Index, b.Index);
 
-    public bool Contains(Symbol a, Symbol b) => _entries[Index(a.Index, b.Index)] is { Count: > 0 };
+    /// <summary>
+    /// Whether the word token (a terminal) is valid in all the states in which <paramref name="a"/> and
+    /// <paramref name="b"/> are valid (<c>states_with(a, b).iter().all(...)</c>), true when there is no such state.
+    /// </summary>
+    public bool WordTokenIsValidInAllStatesWith(Symbol a, Symbol b) =>
+        _coincidentWithoutWordToken is null
+            ? throw new InvalidOperationException("The index was built without a terminal word token.")
+            : !Get(_coincidentWithoutWordToken, a.Index, b.Index);
 
-    private int Index(int a, int b) => a < b ? a * _n + b : b * _n + a;
+    private void Or(ulong[] matrix, int row, ulong[] bits)
+    {
+        var offset = row * _words;
+        for (var w = 0; w < _words; w++)
+        {
+            matrix[offset + w] |= bits[w];
+        }
+    }
+
+    private bool Get(ulong[] matrix, int row, int column) => (matrix[(row * _words) + (column >> 6)] & (1UL << (column & 63))) != 0;
 }

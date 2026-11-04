@@ -96,6 +96,11 @@ internal readonly struct ParseItem : IEquatable<ParseItem>, IComparable<ParseIte
 
     public override bool Equals(object? obj) => obj is ParseItem other && Equals(other);
 
+    /// <summary>
+    /// A hash consistent with <see cref="Equals(ParseItem)"/>, of the numbers only: the items are hashed millions of
+    /// times (the classes of the items of the states, the cores), and hashing the names of the aliases, fields and
+    /// precedences costs more than the rare collisions of the items that differ only by them.
+    /// </summary>
     public override int GetHashCode()
     {
         unchecked
@@ -105,25 +110,16 @@ internal readonly struct ParseItem : IEquatable<ParseItem>, IComparable<ParseIte
             hash = hash * 31 + Production.DynamicPrecedence;
             hash = hash * 31 + Production.Steps.Count;
             hash = hash * 31 + (HasPrecedingInheritedFields ? 1 : 0);
-            hash = hash * 31 + Precedence.GetHashCode();
+            var precedence = Precedence;
+            hash = hash * 31 + (int)precedence.Kind;
+            hash = hash * 31 + precedence.Value;
             hash = hash * 31 + (Associativity.HasValue ? (int)Associativity.Value + 1 : 0);
             var steps = Production.Steps;
-            for (var i = 0; i < steps.Count; i++)
+            for (var i = StepIndex; i < steps.Count; i++)
             {
                 var step = steps[i];
-                if (i < StepIndex)
-                {
-                    hash = hash * 31 + (step.Alias?.GetHashCode() ?? 0);
-                    hash = hash * 31 + (step.FieldName is null ? 0 : StringComparer.Ordinal.GetHashCode(step.FieldName));
-                    if (HasPrecedingInheritedFields)
-                    {
-                        hash = hash * 31 + step.Symbol.GetHashCode();
-                    }
-                }
-                else
-                {
-                    hash = hash * 31 + step.GetHashCode();
-                }
+                hash = hash * 31 + ((int)step.Symbol.Kind << 24 ^ step.Symbol.Index);
+                hash = hash * 31 + step.ReservedWordSetId;
             }
 
             return hash;
@@ -202,21 +198,97 @@ internal readonly struct ParseItem : IEquatable<ParseItem>, IComparable<ParseIte
 
 internal sealed class ParseItemSetEntry(ParseItem item)
 {
-    public ParseItem Item { get; } = item;
+    public ParseItem Item { get; private set; } = item;
 
     public TokenSet Lookaheads { get; set; } = new();
 
     public int FollowingReservedWordSet { get; set; }
+
+    /// <summary>Makes a recycled entry a new entry of an item.</summary>
+    public void Reset(ParseItem item)
+    {
+        Item = item;
+        Lookaheads.Clear();
+        FollowingReservedWordSet = 0;
+    }
+}
+
+/// <summary>
+/// Recycles the item sets which don't outlive the construction of a state: the closures, and the successor item sets of
+/// the existing states, most of them. tree-sitter frees them; reusing them avoids most of the allocations of the table
+/// construction, and the garbage collections of the large heap of the states.
+/// </summary>
+internal sealed class ParseItemSetPool
+{
+    private readonly Stack<ParseItemSet> _sets = new();
+    private readonly Stack<ParseItemSetEntry> _entries = new();
+
+    public ParseItemSet RentSet() => _sets.Count > 0 ? _sets.Pop() : new ParseItemSet(this);
+
+    public ParseItemSetEntry RentEntry(ParseItem item)
+    {
+        if (_entries.Count == 0)
+        {
+            return new ParseItemSetEntry(item);
+        }
+
+        var entry = _entries.Pop();
+        entry.Reset(item);
+        return entry;
+    }
+
+    /// <summary>Recycles a set and its entries, which mustn't be used anymore.</summary>
+    public void Return(ParseItemSet set)
+    {
+        foreach (var entry in set.Entries)
+        {
+            _entries.Push(entry);
+        }
+
+        set.Entries.Clear();
+        _sets.Push(set);
+    }
 }
 
 /// <summary>A set of items with their lookaheads: a state of the parse table.</summary>
 internal sealed class ParseItemSet : IEquatable<ParseItemSet>
 {
+    private readonly ParseItemSetPool? _pool;
+
+    public ParseItemSet()
+    {
+    }
+
+    /// <summary>A set whose new entries come from a pool.</summary>
+    public ParseItemSet(ParseItemSetPool pool)
+    {
+        _pool = pool;
+    }
+
     public List<ParseItemSetEntry> Entries { get; } = [];
 
     public ParseItemSetEntry Insert(ParseItem item)
     {
-        int low = 0, high = Entries.Count;
+        // The items are often inserted in order: compare with the last one first
+        var count = Entries.Count;
+        if (count > 0)
+        {
+            var last = Entries[count - 1];
+            var comparison = last.Item.CompareTo(item);
+            if (comparison == 0)
+            {
+                return last;
+            }
+
+            if (comparison < 0)
+            {
+                var appended = NewEntry(item);
+                Entries.Add(appended);
+                return appended;
+            }
+        }
+
+        int low = 0, high = count - 1;
         while (low < high)
         {
             var mid = (low + high) >> 1;
@@ -236,10 +308,12 @@ internal sealed class ParseItemSet : IEquatable<ParseItemSet>
             }
         }
 
-        var entry = new ParseItemSetEntry(item);
+        var entry = NewEntry(item);
         Entries.Insert(low, entry);
         return entry;
     }
+
+    private ParseItemSetEntry NewEntry(ParseItem item) => _pool?.RentEntry(item) ?? new ParseItemSetEntry(item);
 
     public ParseItemSetCore Core() => new(Entries.Select(e => e.Item).ToArray());
 
@@ -335,20 +409,38 @@ internal sealed class ParseItemSetBuilder
             ReservedLookaheads == other.ReservedLookaheads && PropagatesLookaheads == other.PropagatesLookaheads && Lookaheads.Equals(other.Lookaheads);
     }
 
-    private readonly record struct Addition(ParseItem Item, FollowSetInfo Info);
+    /// <summary>An item added by the closure of a non-terminal, and the rank of the item among all the added items.</summary>
+    private readonly record struct Addition(ParseItem Item, FollowSetInfo Info, int Rank);
 
     private readonly SyntaxGrammar _syntaxGrammar;
     private readonly InlinedProductionMap _inlines;
-    private readonly Dictionary<Symbol, TokenSet> _firstSets = [];
-    private readonly Dictionary<Symbol, int> _reservedFirstSets = [];
-    private readonly Dictionary<Symbol, TokenSet> _lastSets = [];
+    private readonly SymbolTable<TokenSet> _firstSets;
+    private readonly SymbolTable<int> _reservedFirstSets;
+    private readonly SymbolTable<TokenSet> _lastSets;
     private readonly List<Addition>[] _transitiveClosureAdditions;
+
+    // The additions of each non-terminal which propagate the following tokens
+    private readonly Addition[][] _propagatingAdditions;
+
+    // The entries of the added items of the current closure, by rank, and the ranks added; the non-terminals whose
+    // additions were added, and the following tokens propagated by each
+    private readonly ParseItemSetEntry?[] _addedEntries;
+    private readonly List<int> _addedRanks = [];
+    private readonly bool[] _expandedNonTerminals;
+    private readonly List<int> _expandedNonTerminalList = [];
+    private readonly HashSet<(int NonTerminal, TokenSet Tokens, int ReservedTokens)> _propagations = [];
+
+    /// <summary>The pool of the closures, and of the item sets of the parse table builder.</summary>
+    public ParseItemSetPool Pool { get; } = new();
 
     public ParseItemSetBuilder(SyntaxGrammar syntaxGrammar, LexicalGrammar lexicalGrammar, InlinedProductionMap inlines)
     {
         _syntaxGrammar = syntaxGrammar;
         _inlines = inlines;
         _transitiveClosureAdditions = new List<Addition>[syntaxGrammar.Variables.Count];
+        _firstSets = new(lexicalGrammar.Variables.Count, syntaxGrammar.ExternalTokens.Count, syntaxGrammar.Variables.Count);
+        _reservedFirstSets = new(lexicalGrammar.Variables.Count, syntaxGrammar.ExternalTokens.Count, syntaxGrammar.Variables.Count);
+        _lastSets = new(lexicalGrammar.Variables.Count, syntaxGrammar.ExternalTokens.Count, syntaxGrammar.Variables.Count);
 
         for (var i = 0; i < lexicalGrammar.Variables.Count; i++)
         {
@@ -499,18 +591,49 @@ internal sealed class ParseItemSetBuilder
                     {
                         foreach (var index in inlined)
                         {
-                            FindOrPush(additions, new Addition(item.SubstituteProduction(inlines.Productions[index]), followSetInfo));
+                            FindOrPush(additions, new Addition(item.SubstituteProduction(inlines.Productions[index]), followSetInfo, 0));
                         }
                     }
                     else
                     {
-                        FindOrPush(additions, new Addition(item, followSetInfo));
+                        FindOrPush(additions, new Addition(item, followSetInfo, 0));
                     }
                 }
             }
 
             _transitiveClosureAdditions[i] = additions;
         }
+
+        // The items of an item set are sorted and unique by ParseItem.CompareTo: rank the added items in this order, the
+        // items that compare equal having the same rank, so that a closure can collect them by rank instead of inserting
+        // them in a sorted list
+        var ranked = _transitiveClosureAdditions.SelectMany(a => a).Select(a => a.Item).ToList();
+        ranked.Sort((a, b) => a.CompareTo(b));
+        var representatives = new List<ParseItem>();
+        foreach (var item in ranked)
+        {
+            if (representatives.Count == 0 || representatives[representatives.Count - 1].CompareTo(item) != 0)
+            {
+                representatives.Add(item);
+            }
+        }
+
+        _propagatingAdditions = new Addition[_transitiveClosureAdditions.Length][];
+        for (var i = 0; i < _transitiveClosureAdditions.Length; i++)
+        {
+            var additions = _transitiveClosureAdditions[i];
+            for (var k = 0; k < additions.Count; k++)
+            {
+                var item = additions[k].Item;
+                var rank = representatives.BinarySearch(item, Comparer<ParseItem>.Create((a, b) => a.CompareTo(b)));
+                additions[k] = additions[k] with { Rank = rank };
+            }
+
+            _propagatingAdditions[i] = [.. additions.Where(a => a.Info.PropagatesLookaheads)];
+        }
+
+        _addedEntries = new ParseItemSetEntry?[representatives.Count];
+        _expandedNonTerminals = new bool[syntaxGrammar.Variables.Count];
     }
 
     private static void FindOrPush(List<Addition> additions, Addition addition)
@@ -529,33 +652,100 @@ internal sealed class ParseItemSetBuilder
     public TokenSet FirstSet(Symbol symbol) => _firstSets[symbol];
 
     public TokenSet? ReservedFirstSet(Symbol symbol) =>
-        _reservedFirstSets.TryGetValue(symbol, out var id) ? _syntaxGrammar.ReservedWordSets[id] : null;
+        _reservedFirstSets.Contains(symbol) ? _syntaxGrammar.ReservedWordSets[_reservedFirstSets[symbol]] : null;
+
+    /// <summary>The values of the terminals, external tokens and non-terminals, in arrays: they are read for every item.</summary>
+    private sealed class SymbolTable<T>(int terminalCount, int externalCount, int nonTerminalCount)
+    {
+        private readonly T[] _terminals = new T[terminalCount];
+        private readonly T[] _externals = new T[externalCount];
+        private readonly T[] _nonTerminals = new T[nonTerminalCount];
+
+        public bool Contains(Symbol symbol) => symbol.Index >= 0 && symbol.Kind switch
+        {
+            SymbolType.Terminal => symbol.Index < _terminals.Length,
+            SymbolType.External => symbol.Index < _externals.Length,
+            SymbolType.NonTerminal => symbol.Index < _nonTerminals.Length,
+            _ => false,
+        };
+
+        public T this[Symbol symbol]
+        {
+            get => Contains(symbol) ? Values(symbol)[symbol.Index] : throw new KeyNotFoundException($"No value for {symbol}.");
+            set => Values(symbol)[symbol.Index] = value;
+        }
+
+        private T[] Values(Symbol symbol) => symbol.Kind switch
+        {
+            SymbolType.Terminal => _terminals,
+            SymbolType.External => _externals,
+            SymbolType.NonTerminal => _nonTerminals,
+            _ => throw new KeyNotFoundException($"No value for {symbol}."),
+        };
+    }
 
     public TokenSet LastSet(Symbol symbol) => _lastSets[symbol];
 
+    /// <summary>
+    /// tree-sitter's <c>transitive_closure</c>: the items of an item set and the items added by the closure of their next
+    /// non-terminals, sorted.
+    /// </summary>
+    /// <remarks>
+    /// The result is the same as inserting the items one by one in a sorted set like tree-sitter: an entry keeps the first
+    /// item inserted among the items that compare equal, the union of their lookaheads and the maximum of their reserved
+    /// word sets, which don't depend on the order of the insertions. The items of the item set have a step index of at
+    /// least 1 (or are the augmented start item, which sorts after the other items of step 0), and the added items a step
+    /// index of 0, so the added items sort first: they are collected by rank, and the additions of a non-terminal are
+    /// added once, then only their following tokens when they change.
+    /// </remarks>
     public ParseItemSet TransitiveClosure(ParseItemSet itemSet)
     {
-        var result = new ParseItemSet();
+        var items = Pool.RentSet();
         foreach (var entry in itemSet.Entries)
         {
             if (_inlines.InlinedProductionIndices(entry.Item.Production, entry.Item.StepIndex) is { } productions)
             {
                 foreach (var index in productions)
                 {
-                    AddItem(result, entry.Item.SubstituteProduction(_inlines.Productions[index]), entry.Lookaheads, entry.FollowingReservedWordSet);
+                    AddItem(items, entry.Item.SubstituteProduction(_inlines.Productions[index]), entry.Lookaheads, entry.FollowingReservedWordSet);
                 }
             }
             else
             {
-                AddItem(result, entry.Item, entry.Lookaheads, entry.FollowingReservedWordSet);
+                AddItem(items, entry.Item, entry.Lookaheads, entry.FollowingReservedWordSet);
             }
         }
 
+        var result = Pool.RentSet();
+        if (result.Entries.Capacity < _addedRanks.Count + items.Entries.Count)
+        {
+            result.Entries.Capacity = _addedRanks.Count + items.Entries.Count;
+        }
+
+        _addedRanks.Sort();
+        foreach (var rank in _addedRanks)
+        {
+            result.Entries.Add(_addedEntries[rank]!);
+            _addedEntries[rank] = null;
+        }
+
+        result.Entries.AddRange(items.Entries);
+        items.Entries.Clear();
+        Pool.Return(items);
+        _addedRanks.Clear();
+        foreach (var nonTerminal in _expandedNonTerminalList)
+        {
+            _expandedNonTerminals[nonTerminal] = false;
+        }
+
+        _expandedNonTerminalList.Clear();
+        _propagations.Clear();
         return result;
     }
 
-    private void AddItem(ParseItemSet set, ParseItem item, TokenSet lookaheads, int followingReservedWordSet)
+    private void AddItem(ParseItemSet items, ParseItem item, TokenSet lookaheads, int followingReservedWordSet)
     {
+        System.Diagnostics.Debug.Assert(item.StepIndex > 0 || item.IsAugmented, "The items of a kernel are after their first step");
         if (item.Step is { Symbol.IsNonTerminal: true } step)
         {
             TokenSet followingTokens;
@@ -573,17 +763,44 @@ internal sealed class ParseItemSetBuilder
             }
 
             var wordToken = _syntaxGrammar.WordToken;
-            foreach (var addition in _transitiveClosureAdditions[step.Symbol.Index])
+            var nonTerminal = step.Symbol.Index;
+            if (!_expandedNonTerminals[nonTerminal])
             {
-                var entry = set.Insert(addition.Item);
-                entry.Lookaheads.InsertAll(addition.Info.Lookaheads);
-                if (wordToken is { } word && addition.Info.Lookaheads.Contains(word))
+                _expandedNonTerminals[nonTerminal] = true;
+                _expandedNonTerminalList.Add(nonTerminal);
+                _propagations.Add((nonTerminal, followingTokens, followingReservedTokens));
+                foreach (var addition in _transitiveClosureAdditions[nonTerminal])
                 {
-                    entry.FollowingReservedWordSet = Math.Max(entry.FollowingReservedWordSet, addition.Info.ReservedLookaheads);
-                }
+                    var entry = _addedEntries[addition.Rank];
+                    if (entry is null)
+                    {
+                        entry = Pool.RentEntry(addition.Item);
+                        _addedEntries[addition.Rank] = entry;
+                        _addedRanks.Add(addition.Rank);
+                    }
 
-                if (addition.Info.PropagatesLookaheads)
+                    entry.Lookaheads.InsertAll(addition.Info.Lookaheads);
+                    if (wordToken is { } word && addition.Info.Lookaheads.Contains(word))
+                    {
+                        entry.FollowingReservedWordSet = Math.Max(entry.FollowingReservedWordSet, addition.Info.ReservedLookaheads);
+                    }
+
+                    if (addition.Info.PropagatesLookaheads)
+                    {
+                        entry.Lookaheads.InsertAll(followingTokens);
+                        if (wordToken is { } w && followingTokens.Contains(w))
+                        {
+                            entry.FollowingReservedWordSet = Math.Max(entry.FollowingReservedWordSet, followingReservedTokens);
+                        }
+                    }
+                }
+            }
+            else if (_propagations.Add((nonTerminal, followingTokens, followingReservedTokens)))
+            {
+                // The additions are in the set with their own lookaheads: only the following tokens can be new
+                foreach (var addition in _propagatingAdditions[nonTerminal])
                 {
+                    var entry = _addedEntries[addition.Rank]!;
                     entry.Lookaheads.InsertAll(followingTokens);
                     if (wordToken is { } w && followingTokens.Contains(w))
                     {
@@ -593,7 +810,7 @@ internal sealed class ParseItemSetBuilder
             }
         }
 
-        var e = set.Insert(item);
+        var e = items.Insert(item);
         e.Lookaheads.InsertAll(lookaheads);
         e.FollowingReservedWordSet = Math.Max(e.FollowingReservedWordSet, followingReservedWordSet);
     }

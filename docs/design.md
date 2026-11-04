@@ -57,6 +57,41 @@ classes. Two quirks matter for the trees of erroneous inputs and the reuse of no
   (`choice('\n', ';', '\0')`) match at the end of a file without a final new line. Regular expressions are parsed by `RegexParser` (JavaScript syntax with the Rust extensions accepted by
 tree-sitter) and turned into NFAs, never forwarded to `System.Text.RegularExpressions`.
 
+### The cost of the generation
+
+The large grammars (C++, Julia, Razor, Verilog, C#) have 60,000 to 100,000 LR(1) states before the minimization, and
+millions of entries. The port keeps the order of operations of tree-sitter, which decides the numbering of the states and
+the resolution of the conflicts, but not always its data structures, which are not the same in C# (no `IndexMap`, no
+cheap moves, a garbage collector):
+
+- `TransitiveClosure` collects the items added by the closure of the non-terminals by their rank in the order of
+  `ParseItem.CompareTo` (computed once) instead of inserting them in a sorted list: the items of a kernel are after their
+  first step (or are the start item) and sort after them, and an entry keeps the first item inserted among the items that
+  compare equal, like tree-sitter. The additions of a non-terminal are added once per closure, then only their following
+  tokens when these change.
+- The item sets which don't become states (the closures and most successor item sets) are recycled by a
+  `ParseItemSetPool`. The states are looked up by a packed key: the class of each item (the items equal by
+  `ParseItem.Equals`), its reserved word set and the bits of its lookaheads.
+- The preceding symbols and auxiliary symbols of the states are immutable linked lists, shared instead of copied. A
+  `ParseTableEntry` stores its first action, `OrderedMap` has a compact index of open addressing and is allocated at its
+  size, and the enums are compared as numbers (`Enum.CompareTo(object)` boxes them).
+- `CoincidentTokenIndex` stores bit matrices instead of the lists of the states of each pair of tokens, which hold
+  hundreds of millions of entries for the large grammars: the only questions asked of these lists are whether a pair has
+  a state, and whether the word token is valid in all of them.
+- The minimization compares the entries of two states by merging their sorted tokens, with the conflicting tokens of each
+  token as bits and the shapes of the action lists (the actions without their shifted states) as numbers. In
+  `SplitStateIdGroups`, a state with the same tokens (and reserved words) as an earlier state of its group isn't compared
+  with the states after it: between such states the split condition is the inequality of the groups of their successors,
+  so it would split the same states as the earlier state, none. The groups are split exactly like tree-sitter, without
+  comparing all the pairs of states of the large cores.
+- The token conflicts depend only on the lexical grammar: they are computed before the parse table, when their garbage is
+  collected without the large heap of the states. The NFA closures mark the visited states instead of searching the
+  lists of states, and the lex table merges the token sets with the incompatible terminals of each terminal as bits.
+
+The compilations of the large grammars are 2.4 to 4.6 times faster than with the data structures of tree-sitter (C++
+and Julia from 52 s to 11.5 s with `treespitter compile`, the 27 grammars of the source generator from 320 s to 72 s),
+and the tables are the same: the `.tsl` files of the 27 grammars are compared byte for byte.
+
 ## The language: the "bytecode"
 
 `Language` holds the generated tables, the equivalent of the `TSLanguage` of a `parser.c`:

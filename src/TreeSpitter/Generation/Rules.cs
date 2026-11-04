@@ -44,7 +44,8 @@ internal readonly record struct Symbol(SymbolType Kind, int Index) : IComparable
 
     public int CompareTo(Symbol other)
     {
-        var result = Kind.CompareTo(other.Kind);
+        // The enums are compared as their values: Enum.CompareTo(object) boxes them
+        var result = ((byte)Kind).CompareTo((byte)other.Kind);
         return result != 0 ? result : Index.CompareTo(other.Index);
     }
 
@@ -98,7 +99,7 @@ internal readonly record struct Precedence(PrecedenceValueKind Kind, int Value, 
 
     public int CompareTo(Precedence other)
     {
-        var result = Kind.CompareTo(other.Kind);
+        var result = ((byte)Kind).CompareTo((byte)other.Kind);
         if (result != 0)
         {
             return result;
@@ -580,63 +581,160 @@ internal sealed class TokenSet : IEquatable<TokenSet>
     }
 
     /// <summary>The symbols in the order of tree-sitter: terminals, external tokens, end, end of non-terminal extra.</summary>
-    public IEnumerable<Symbol> Symbols
+    public SymbolCollection Symbols => new(this, terminalsOnly: false);
+
+    public SymbolCollection Terminals => new(this, terminalsOnly: true);
+
+    /// <summary>The symbols of a set, a struct enumerable for <c>foreach</c> (the sets are enumerated millions of times).</summary>
+    public readonly struct SymbolCollection(TokenSet set, bool terminalsOnly) : IEnumerable<Symbol>
     {
-        get
-        {
-            foreach (var index in Bits(_terminals))
-            {
-                yield return Symbol.Terminal(index);
-            }
+        public SymbolEnumerator GetEnumerator() => new(set, terminalsOnly);
 
-            foreach (var index in Bits(_externals))
-            {
-                yield return Symbol.External(index);
-            }
+        IEnumerator<Symbol> IEnumerable<Symbol>.GetEnumerator() => GetEnumerator();
 
-            if (Eof)
-            {
-                yield return Symbol.End;
-            }
-
-            if (EndOfNonTerminalExtra)
-            {
-                yield return Symbol.EndOfNonTerminalExtra;
-            }
-        }
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
-    public IEnumerable<Symbol> Terminals
+    /// <summary>Enumerates the bits of the terminals, then of the external tokens, then the end symbols.</summary>
+    public struct SymbolEnumerator(TokenSet set, bool terminalsOnly) : IEnumerator<Symbol>
     {
-        get
-        {
-            foreach (var index in Bits(_terminals))
-            {
-                yield return Symbol.Terminal(index);
-            }
-        }
-    }
+        // 0: terminals, 1: externals, 2: end, 3: end of non-terminal extra, 4: done
+        private int _part;
+        private int _word = -1;
+        private ulong _bits;
 
-    private static IEnumerable<int> Bits(ulong[] words)
-    {
-        for (var w = 0; w < words.Length; w++)
+        public Symbol Current { readonly get; private set; }
+
+        readonly object System.Collections.IEnumerator.Current => Current;
+
+        public bool MoveNext()
         {
-            var word = words[w];
-            while (word != 0)
+            while (true)
             {
-#if NET
-                var bit = System.Numerics.BitOperations.TrailingZeroCount(word);
-#else
-                var bit = 0;
-                while ((word & (1UL << bit)) == 0)
+                switch (_part)
                 {
-                    bit++;
+                    case 0:
+                    case 1:
+                        {
+                            var words = _part == 0 ? set._terminals : set._externals;
+                            while (_bits == 0)
+                            {
+                                if (++_word >= words.Length)
+                                {
+                                    break;
+                                }
+
+                                _bits = words[_word];
+                            }
+
+                            if (_bits != 0)
+                            {
+                                var index = (_word * 64) + TrailingZeroCount(_bits);
+                                _bits &= _bits - 1;
+                                Current = _part == 0 ? Symbol.Terminal(index) : Symbol.External(index);
+                                return true;
+                            }
+
+                            _part = terminalsOnly ? 4 : _part + 1;
+                            _word = -1;
+                            break;
+                        }
+
+                    case 2:
+                        _part = 3;
+                        if (set.Eof)
+                        {
+                            Current = Symbol.End;
+                            return true;
+                        }
+
+                        break;
+                    case 3:
+                        _part = 4;
+                        if (set.EndOfNonTerminalExtra)
+                        {
+                            Current = Symbol.EndOfNonTerminalExtra;
+                            return true;
+                        }
+
+                        break;
+                    default:
+                        return false;
                 }
-#endif
-                yield return w * 64 + bit;
-                word &= word - 1;
             }
         }
+
+        public void Reset()
+        {
+            _part = 0;
+            _word = -1;
+            _bits = 0;
+        }
+
+        public readonly void Dispose()
+        {
+        }
+    }
+
+    private static int TrailingZeroCount(ulong word)
+    {
+#if NET
+        return System.Numerics.BitOperations.TrailingZeroCount(word);
+#else
+        // The index of the lowest bit with a de Bruijn sequence: the source generator runs this code
+        return DeBruijnPositions[(int)(((word & (0UL - word)) * DeBruijnSequence) >> 58)];
+#endif
+    }
+
+#if !NET
+    private const ulong DeBruijnSequence = 0x022FDD63CC95386DUL;
+
+    private static readonly byte[] DeBruijnPositions = CreateDeBruijnPositions();
+
+    private static byte[] CreateDeBruijnPositions()
+    {
+        var positions = new byte[64];
+        for (var i = 0; i < 64; i++)
+        {
+            positions[(int)(((1UL << i) * DeBruijnSequence) >> 58)] = (byte)i;
+        }
+
+        return positions;
+    }
+#endif
+
+    /// <summary>
+    /// Writes the bits of the set at an offset of an array: the terminals and the external tokens on fixed numbers of
+    /// words, then the end symbols, so that the sets are equal if and only if their bits are.
+    /// </summary>
+    public void CopyBits(ulong[] destination, int offset, int terminalWords, int externalWords)
+    {
+        CopyWords(_terminals, destination, offset, terminalWords);
+        CopyWords(_externals, destination, offset + terminalWords, externalWords);
+        destination[offset + terminalWords + externalWords] = (Eof ? 1UL : 0) | (EndOfNonTerminalExtra ? 2UL : 0);
+    }
+
+    private static void CopyWords(ulong[] source, ulong[] destination, int offset, int count)
+    {
+        var copied = Math.Min(source.Length, count);
+        Array.Copy(source, 0, destination, offset, copied);
+        Array.Clear(destination, offset + copied, count - copied);
+        for (var i = copied; i < source.Length; i++)
+        {
+            if (source[i] != 0)
+            {
+                throw new InvalidOperationException("The set has a symbol out of the grammar.");
+            }
+        }
+    }
+
+    /// <summary>Removes all the symbols, keeping the storage.</summary>
+    public void Clear()
+    {
+        Array.Clear(_terminals, 0, _terminals.Length);
+        Array.Clear(_externals, 0, _externals.Length);
+        Eof = false;
+        EndOfNonTerminalExtra = false;
     }
 
     public bool Contains(Symbol symbol) => symbol.Kind switch
@@ -649,6 +747,21 @@ internal sealed class TokenSet : IEquatable<TokenSet>
     };
 
     public bool ContainsTerminal(int index) => Get(_terminals, index);
+
+    /// <summary>Whether a terminal of the set is in the bits of a row of terminals, at an offset of an array.</summary>
+    public bool IntersectsTerminals(ulong[] bits, int offset, int words)
+    {
+        var count = Math.Min(words, _terminals.Length);
+        for (var w = 0; w < count; w++)
+        {
+            if ((_terminals[w] & bits[offset + w]) != 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private static bool Get(ulong[] words, int index)
     {

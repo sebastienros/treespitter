@@ -25,13 +25,17 @@ internal static class TableBuilder
     {
         var itemSetBuilder = new ParseItemSetBuilder(syntaxGrammar, lexicalGrammar, inlines);
         var followingTokens = GetFollowingTokens(syntaxGrammar, lexicalGrammar, inlines, itemSetBuilder);
+
+        // The token conflicts depend only on the lexical grammar and the following tokens: tree-sitter computes them after
+        // the parse table, they are computed before it here, when their garbage is collected without the large heap of
+        // the states
+        var tokenConflictMap = new TokenConflictMap(lexicalGrammar, followingTokens);
         var builder = new ParseTableBuilder(syntaxGrammar, lexicalGrammar, itemSetBuilder, variableInfo);
         var parseTable = builder.Build();
         warnings?.AddRange(builder.Warnings);
 
-        var tokenConflictMap = new TokenConflictMap(lexicalGrammar, followingTokens);
-        var coincidentTokenIndex = new CoincidentTokenIndex(parseTable, lexicalGrammar);
-        var keywords = IdentifyKeywords(lexicalGrammar, parseTable, syntaxGrammar.WordToken, tokenConflictMap, coincidentTokenIndex);
+        var coincidentTokenIndex = new CoincidentTokenIndex(parseTable, lexicalGrammar, syntaxGrammar.WordToken);
+        var keywords = IdentifyKeywords(lexicalGrammar, syntaxGrammar.WordToken, tokenConflictMap, coincidentTokenIndex);
         PopulateErrorState(parseTable, syntaxGrammar, lexicalGrammar, coincidentTokenIndex, tokenConflictMap, keywords);
         PopulateUsedSymbols(parseTable, syntaxGrammar, lexicalGrammar);
         new Minimizer(parseTable, syntaxGrammar, lexicalGrammar, simpleAliases, tokenConflictMap, keywords).Minimize();
@@ -137,7 +141,7 @@ internal static class TableBuilder
 
             if (!state.TerminalEntries.ContainsKey(symbol))
             {
-                state.TerminalEntries[symbol] = new ParseTableEntry { Reusable = false, Actions = [ParseAction.Recover] };
+                state.TerminalEntries[symbol] = new ParseTableEntry(ParseAction.Recover) { Reusable = false };
             }
         }
 
@@ -145,11 +149,11 @@ internal static class TableBuilder
         {
             if (syntaxGrammar.ExternalTokens[i].CorrespondingInternalToken is null && !state.TerminalEntries.ContainsKey(Symbol.External(i)))
             {
-                state.TerminalEntries[Symbol.External(i)] = new ParseTableEntry { Reusable = false, Actions = [ParseAction.Recover] };
+                state.TerminalEntries[Symbol.External(i)] = new ParseTableEntry(ParseAction.Recover) { Reusable = false };
             }
         }
 
-        state.TerminalEntries[Symbol.End] = new ParseTableEntry { Reusable = false, Actions = [ParseAction.Recover] };
+        state.TerminalEntries[Symbol.End] = new ParseTableEntry(ParseAction.Recover) { Reusable = false };
     }
 
     private static void PopulateUsedSymbols(ParseTable parseTable, SyntaxGrammar syntaxGrammar, LexicalGrammar lexicalGrammar)
@@ -250,7 +254,7 @@ internal static class TableBuilder
         }
     }
 
-    private static TokenSet IdentifyKeywords(LexicalGrammar lexicalGrammar, ParseTable parseTable, Symbol? wordToken, TokenConflictMap tokenConflictMap, CoincidentTokenIndex coincidentTokenIndex)
+    private static TokenSet IdentifyKeywords(LexicalGrammar lexicalGrammar, Symbol? wordToken, TokenConflictMap tokenConflictMap, CoincidentTokenIndex coincidentTokenIndex)
     {
         // An external word token has no lexical rule to compare with the keywords
         if (wordToken is not { IsTerminal: true } word)
@@ -305,7 +309,8 @@ internal static class TableBuilder
                     continue;
                 }
 
-                if (coincidentTokenIndex.StatesWith(token, Symbol.Terminal(other)).All(stateId => parseTable.States[stateId].TerminalEntries.ContainsKey(word)))
+                // The word token was valid in all the states of the keyword candidate and the other token
+                if (coincidentTokenIndex.WordTokenIsValidInAllStatesWith(token, Symbol.Terminal(other)))
                 {
                     continue;
                 }
@@ -402,16 +407,31 @@ internal static class TableBuilder
         }
     }
 
-    /// <summary>Splits the groups of states until <paramref name="shouldSplit"/> holds for no pair of states of a group.</summary>
-    public static bool SplitStateIdGroups<TState>(IReadOnlyList<TState> states, List<List<int>> stateIdsByGroupId, int[] groupIdsByStateId, int startGroupId, Func<TState, TState, int[], bool> shouldSplit)
+    /// <summary>
+    /// tree-sitter's <c>split_state_id_groups</c>: splits the groups of states until <paramref name="shouldSplit"/>
+    /// holds for no pair of states of a group, comparing each state with the states after it which weren't split.
+    /// </summary>
+    /// <remarks>
+    /// The optional classes of the states are such that, for two states of a class, <c>shouldSplit</c> is the inequality
+    /// of a signature of the states (the targets of their actions), and the comparison of a state of a class with another
+    /// state depends only on the signature of the first state. The first state of a class compared with the states after
+    /// it in a group splits the states of its class with another signature, so the states of its class after it have its
+    /// signature and would split the same states, none: they aren't compared, the comparisons of the large groups
+    /// (thousands of states of a core) taking quadratic time. The groups are split exactly like tree-sitter.
+    /// </remarks>
+    public static bool SplitStateIdGroups<TState>(IReadOnlyList<TState> states, List<List<int>> stateIdsByGroupId, int[] groupIdsByStateId, int startGroupId, Func<TState, TState, int[], bool> shouldSplit, Func<TState, int>? leftClass = null)
     {
         var result = false;
         var groupId = startGroupId;
+        var splitStateIds = new List<int>();
+        var split = new HashSet<int>();
+        var leftClasses = new HashSet<int>();
         while (groupId < stateIdsByGroupId.Count)
         {
             var stateIds = stateIdsByGroupId[groupId];
-            var splitStateIds = new List<int>();
-            var split = new HashSet<int>();
+            splitStateIds.Clear();
+            split.Clear();
+            leftClasses.Clear();
             for (var i = 0; i < stateIds.Count; i++)
             {
                 var leftStateId = stateIds[i];
@@ -421,6 +441,11 @@ internal static class TableBuilder
                 }
 
                 var leftState = states[leftStateId];
+                if (leftClass is not null && !leftClasses.Add(leftClass(leftState)))
+                {
+                    continue;
+                }
+
                 for (var j = i + 1; j < stateIds.Count; j++)
                 {
                     var rightStateId = stateIds[j];
@@ -447,7 +472,7 @@ internal static class TableBuilder
                     groupIdsByStateId[id] = newGroupId;
                 }
 
-                stateIdsByGroupId.Add(splitStateIds);
+                stateIdsByGroupId.Add([.. splitStateIds]);
             }
 
             groupId++;
@@ -593,12 +618,13 @@ internal sealed class Minimizer(ParseTable parseTable, SyntaxGrammar syntaxGramm
             groupIdsByStateId[i] = state.CoreId;
         }
 
-        TableBuilder.SplitStateIdGroups(parseTable.States, stateIdsByGroupId, groupIdsByStateId, 0, StatesConflict);
+        var conflictInfos = new StateConflictInfos(parseTable, syntaxGrammar, lexicalGrammar, tokenConflictMap, keywords);
+        TableBuilder.SplitStateIdGroups(conflictInfos.States, stateIdsByGroupId, groupIdsByStateId, 0, conflictInfos.StatesConflict, s => s.Class);
 
         // The successors of the states, sorted by symbol: the groups are split until no state of a group has a successor
         // in another group than the one of another state of the group, which compares every pair of states many times
-        var successors = parseTable.States.Select(Successors.Of).ToArray();
-        while (TableBuilder.SplitStateIdGroups(successors, stateIdsByGroupId, groupIdsByStateId, 0, Successors.Differ))
+        var successors = Successors.Of(parseTable.States);
+        while (TableBuilder.SplitStateIdGroups(successors, stateIdsByGroupId, groupIdsByStateId, 0, Successors.Differ, s => s.Class))
         {
         }
 
@@ -620,6 +646,12 @@ internal sealed class Minimizer(ParseTable parseTable, SyntaxGrammar syntaxGramm
         foreach (var stateIds in stateIdsByGroupId)
         {
             var parseState = parseTable.States[stateIds[0]];
+            if (stateIds.Count > 1)
+            {
+                // The states share the reserved word sets of the grammar
+                parseState.ReservedWords = parseState.ReservedWords.Clone();
+            }
+
             for (var k = 1; k < stateIds.Count; k++)
             {
                 var other = parseTable.States[stateIds[k]];
@@ -641,32 +673,342 @@ internal sealed class Minimizer(ParseTable parseTable, SyntaxGrammar syntaxGramm
 
     private static void Swap(List<List<int>> list, int i, int j) => (list[i], list[j]) = (list[j], list[i]);
 
-    private bool StatesConflict(ParseState left, ParseState right, int[] groupIdsByStateId)
+    /// <summary>
+    /// What tree-sitter's <c>states_conflict</c> reads of the states, prepared once: the minimization compares the pairs
+    /// of states of a core, millions of pairs for the large grammars.
+    /// </summary>
+    /// <remarks>
+    /// <c>states_conflict</c> is the disjunction of <c>entries_conflict</c> for the tokens of both states and of
+    /// <c>token_conflicts</c> for the tokens of only one state, so the order of these checks doesn't change the result:
+    /// the terminal entries of each state are sorted by token, the tokens of two states are merged, and the loop of
+    /// <c>token_conflicts</c> on the tokens of the other state is an intersection of bit sets.
+    /// </remarks>
+    private sealed class StateConflictInfos
     {
-        foreach (var (token, leftEntry) in left.TerminalEntries.Entries)
+        private readonly int _terminalCount;
+        private readonly int _words;
+        private readonly int _endKey;
+        private readonly Symbol[] _symbolsByKey;
+
+        // By key: the tokens which always conflict (the end of a non-terminal extra, the external tokens, and the
+        // terminals that correspond to external tokens, after the reserved words), and the terminals they conflict with
+        private readonly bool[] _isExternal;
+        private readonly bool[] _correspondsToExternalToken;
+        private readonly ulong[] _conflictingTerminals;
+
+        public StateConflictInfos(ParseTable parseTable, SyntaxGrammar syntaxGrammar, LexicalGrammar lexicalGrammar, TokenConflictMap tokenConflictMap, TokenSet keywords)
         {
-            if (right.TerminalEntries.TryGetValue(token, out var rightEntry))
+            _terminalCount = lexicalGrammar.Variables.Count;
+            _words = (_terminalCount + 63) >> 6;
+            var externalCount = syntaxGrammar.ExternalTokens.Count;
+            _endKey = _terminalCount + externalCount;
+            var keyCount = _endKey + 2;
+            _symbolsByKey = new Symbol[keyCount];
+            for (var i = 0; i < _terminalCount; i++)
             {
-                if (EntriesConflict(leftEntry, rightEntry, groupIdsByStateId))
+                _symbolsByKey[i] = Symbol.Terminal(i);
+            }
+
+            for (var i = 0; i < externalCount; i++)
+            {
+                _symbolsByKey[_terminalCount + i] = Symbol.External(i);
+            }
+
+            _symbolsByKey[_endKey] = Symbol.End;
+            _symbolsByKey[_endKey + 1] = Symbol.EndOfNonTerminalExtra;
+
+            _isExternal = new bool[keyCount];
+            _correspondsToExternalToken = new bool[keyCount];
+            _conflictingTerminals = new ulong[(_endKey + 1) * _words];
+            var wordToken = syntaxGrammar.WordToken;
+            for (var key = 0; key < keyCount; key++)
+            {
+                var newToken = _symbolsByKey[key];
+                _isExternal[key] = newToken == Symbol.EndOfNonTerminalExtra || newToken.IsExternal;
+                _correspondsToExternalToken[key] = syntaxGrammar.ExternalTokens.Any(e => e.CorrespondingInternalToken == newToken);
+                if (key > _endKey || newToken.IsExternal)
+                {
+                    continue;
+                }
+
+                for (var j = 0; j < _terminalCount; j++)
+                {
+                    var token = Symbol.Terminal(j);
+                    if (wordToken == token && keywords.Contains(newToken))
+                    {
+                        continue;
+                    }
+
+                    if (wordToken == newToken && keywords.Contains(token))
+                    {
+                        continue;
+                    }
+
+                    // Like tree-sitter, the index of the new token is used even for the end of the input, whose index is 0
+                    if (tokenConflictMap.DoesConflict(newToken.Index, token.Index) || tokenConflictMap.DoesMatchSameString(newToken.Index, token.Index))
+                    {
+                        _conflictingTerminals[(key * _words) + (j >> 6)] |= 1UL << (j & 63);
+                    }
+                }
+            }
+
+            States = new StateConflictInfo[parseTable.States.Count];
+            var keyClasses = new Dictionary<int[], int>(SequenceComparer<int>.Instance);
+            var classes = new Dictionary<(int Keys, TokenSet ReservedWords), int>();
+            var singleActionShapes = new Dictionary<ParseAction, int>();
+            var shapes = new Dictionary<ParseAction[], int>(SequenceComparer<ParseAction>.Instance);
+            for (var i = 0; i < States.Length; i++)
+            {
+                var state = parseTable.States[i];
+                var terminals = new ulong[_words];
+                var keys = new int[state.TerminalEntries.Count];
+                var entries = new ParseTableEntry[keys.Length];
+                var k = 0;
+                foreach (var (token, entry) in state.TerminalEntries.Entries)
+                {
+                    keys[k] = Key(token);
+                    entries[k++] = entry;
+                    if (token.IsTerminal)
+                    {
+                        terminals[token.Index >> 6] |= 1UL << (token.Index & 63);
+                    }
+                }
+
+                // The tokens are unique
+                Array.Sort(keys, entries);
+                var shapeIds = new int[keys.Length];
+                var shiftStates = new int[keys.Length];
+                for (k = 0; k < keys.Length; k++)
+                {
+                    (shapeIds[k], shiftStates[k]) = Shape(entries[k].Actions, singleActionShapes, shapes);
+                }
+
+                var keyClass = Intern(keyClasses, keys);
+                if (!classes.TryGetValue((keyClass, state.ReservedWords), out var stateClass))
+                {
+                    stateClass = classes.Count;
+                    classes[(keyClass, state.ReservedWords)] = stateClass;
+                }
+
+                States[i] = new StateConflictInfo(state, keys, entries, shapeIds, shiftStates, terminals, stateClass);
+            }
+        }
+
+        /// <summary>
+        /// The shape of the actions of an entry: an id of the actions with the states of the shifts left out, so that
+        /// <c>entries_conflict</c> compares the shapes and the groups of the shifted states; and the state of the shift,
+        /// -1 if there is none and -2 if there are several.
+        /// </summary>
+        private static (int ShapeId, int ShiftState) Shape(ParseTableEntry.ParseActionList actions, Dictionary<ParseAction, int> singleActionShapes, Dictionary<ParseAction[], int> shapes)
+        {
+            static ParseAction WithoutState(ParseAction action) => action.Kind == ParseActionKind.Shift ? ParseAction.Shift(0, action.IsRepetition) : action;
+
+            var shiftState = -1;
+            foreach (var action in actions)
+            {
+                if (action.Kind == ParseActionKind.Shift)
+                {
+                    shiftState = shiftState == -1 ? action.State : -2;
+                }
+            }
+
+            int id;
+            if (actions.Count == 1)
+            {
+                var shape = WithoutState(actions[0]);
+                if (!singleActionShapes.TryGetValue(shape, out id))
+                {
+                    id = singleActionShapes.Count + shapes.Count;
+                    singleActionShapes[shape] = id;
+                }
+            }
+            else
+            {
+                var shape = actions.Select(WithoutState).ToArray();
+                if (!shapes.TryGetValue(shape, out id))
+                {
+                    id = singleActionShapes.Count + shapes.Count;
+                    shapes[shape] = id;
+                }
+            }
+
+            return (id, shiftState);
+        }
+
+        public StateConflictInfo[] States { get; }
+
+        /// <summary>tree-sitter's <c>states_conflict</c>.</summary>
+        public bool StatesConflict(StateConflictInfo left, StateConflictInfo right, int[] groupIdsByStateId)
+        {
+            var leftKeys = left.Keys;
+            var rightKeys = right.Keys;
+            int i = 0, j = 0;
+            while (i < leftKeys.Length && j < rightKeys.Length)
+            {
+                var leftKey = leftKeys[i];
+                var rightKey = rightKeys[j];
+                if (leftKey == rightKey)
+                {
+                    if (EntriesConflict(left, i, right, j, groupIdsByStateId))
+                    {
+                        return true;
+                    }
+
+                    i++;
+                    j++;
+                }
+                else if (leftKey < rightKey)
+                {
+                    if (TokenConflicts(right, leftKey))
+                    {
+                        return true;
+                    }
+
+                    i++;
+                }
+                else
+                {
+                    if (TokenConflicts(left, rightKey))
+                    {
+                        return true;
+                    }
+
+                    j++;
+                }
+            }
+
+            for (; i < leftKeys.Length; i++)
+            {
+                if (TokenConflicts(right, leftKeys[i]))
                 {
                     return true;
                 }
             }
-            else if (TokenConflicts(right, token))
+
+            for (; j < rightKeys.Length; j++)
             {
-                return true;
+                if (TokenConflicts(left, rightKeys[j]))
+                {
+                    return true;
+                }
             }
+
+            return false;
         }
 
-        foreach (var token in right.TerminalEntries.Keys)
+        /// <summary>tree-sitter's <c>entries_conflict</c> for the entries of a token in two states: the shapes of their actions or the groups of their shifts differ.</summary>
+        private static bool EntriesConflict(StateConflictInfo left, int i, StateConflictInfo right, int j, int[] groupIdsByStateId)
         {
-            if (!left.TerminalEntries.ContainsKey(token) && TokenConflicts(left, token))
+            if (left.ShapeIds[i] != right.ShapeIds[j])
             {
                 return true;
             }
+
+            var shiftState = left.ShiftStates[i];
+            return shiftState switch
+            {
+                -1 => false,
+                -2 => Minimizer.EntriesConflict(left.Entries[i], right.Entries[j], groupIdsByStateId),
+                _ => groupIdsByStateId[shiftState] != groupIdsByStateId[right.ShiftStates[j]],
+            };
         }
 
-        return false;
+        /// <summary>tree-sitter's <c>token_conflicts</c>: whether adding the token of a key to a state can change its lexing.</summary>
+        private bool TokenConflicts(StateConflictInfo rightState, int newTokenKey)
+        {
+            if (_isExternal[newTokenKey])
+            {
+                return true;
+            }
+
+            if (rightState.State.ReservedWords.Contains(_symbolsByKey[newTokenKey]))
+            {
+                return false;
+            }
+
+            if (_correspondsToExternalToken[newTokenKey])
+            {
+                return true;
+            }
+
+            var terminals = rightState.Terminals;
+            var offset = newTokenKey * _words;
+            for (var w = 0; w < terminals.Length; w++)
+            {
+                if ((terminals[w] & _conflictingTerminals[offset + w]) != 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private int Key(Symbol token) => token.Kind switch
+        {
+            SymbolType.Terminal => token.Index,
+            SymbolType.External => _terminalCount + token.Index,
+            SymbolType.End => _endKey,
+            SymbolType.EndOfNonTerminalExtra => _endKey + 1,
+            _ => throw new InvalidOperationException("A non-terminal has no terminal entry"),
+        };
+    }
+
+    /// <summary>
+    /// The terminal entries of a state sorted by key with the shapes of their actions, the bits of its terminals, and its
+    /// class for <see cref="TableBuilder.SplitStateIdGroups"/>: the states with the same tokens and reserved words.
+    /// </summary>
+    private sealed class StateConflictInfo(ParseState state, int[] keys, ParseTableEntry[] entries, int[] shapeIds, int[] shiftStates, ulong[] terminals, int stateClass)
+    {
+        public ParseState State { get; } = state;
+
+        public int[] Keys { get; } = keys;
+
+        public ParseTableEntry[] Entries { get; } = entries;
+
+        public int[] ShapeIds { get; } = shapeIds;
+
+        public int[] ShiftStates { get; } = shiftStates;
+
+        public ulong[] Terminals { get; } = terminals;
+
+        public int Class { get; } = stateClass;
+    }
+
+    /// <summary>The id of an array in a dictionary of arrays compared by their elements.</summary>
+    private static int Intern<T>(Dictionary<T[], int> ids, T[] array)
+        where T : IEquatable<T>
+    {
+        if (!ids.TryGetValue(array, out var id))
+        {
+            id = ids.Count;
+            ids[array] = id;
+        }
+
+        return id;
+    }
+
+    /// <summary>Compares arrays by their elements.</summary>
+    private sealed class SequenceComparer<T> : IEqualityComparer<T[]>
+        where T : IEquatable<T>
+    {
+        public static readonly SequenceComparer<T> Instance = new();
+
+        public bool Equals(T[]? x, T[]? y) => x is not null && y is not null && x.AsSpan().SequenceEqual(y);
+
+        public int GetHashCode(T[] obj)
+        {
+            unchecked
+            {
+                var hash = obj.Length;
+                foreach (var item in obj)
+                {
+                    hash = hash * 31 + item.GetHashCode();
+                }
+
+                return hash;
+            }
+        }
     }
 
     /// <summary>
@@ -681,32 +1023,74 @@ internal sealed class Minimizer(ParseTable parseTable, SyntaxGrammar syntaxGramm
         private long[] _gotoKeys = [];
         private int[] _gotoTargets = [];
 
-        public static Successors Of(ParseState state)
+        /// <summary>The class of the state for <see cref="TableBuilder.SplitStateIdGroups"/>: the states with the same keys.</summary>
+        public int Class { get; private set; }
+
+        public static Successors[] Of(List<ParseState> states)
         {
-            var shifts = new List<(long Key, int Target)>();
+            var result = new Successors[states.Count];
+            var shiftKeyClasses = new Dictionary<long[], int>(SequenceComparer<long>.Instance);
+            var gotoKeyClasses = new Dictionary<long[], int>(SequenceComparer<long>.Instance);
+            var classes = new Dictionary<(int ShiftKeys, int GotoKeys), int>();
+            for (var i = 0; i < result.Length; i++)
+            {
+                var successors = Of(states[i]);
+                var key = (Intern(shiftKeyClasses, successors._shiftKeys), Intern(gotoKeyClasses, successors._gotoKeys));
+                if (!classes.TryGetValue(key, out var keyClass))
+                {
+                    keyClass = classes.Count;
+                    classes[key] = keyClass;
+                }
+
+                successors.Class = keyClass;
+                result[i] = successors;
+            }
+
+            return result;
+        }
+
+        private static Successors Of(ParseState state)
+        {
+            var shiftCount = 0;
+            foreach (var (_, entry) in state.TerminalEntries.Entries)
+            {
+                if (entry.Actions[entry.Actions.Count - 1].Kind == ParseActionKind.Shift)
+                {
+                    shiftCount++;
+                }
+            }
+
+            var shiftKeys = new long[shiftCount];
+            var shiftTargets = new int[shiftCount];
+            var k = 0;
             foreach (var (token, entry) in state.TerminalEntries.Entries)
             {
                 var last = entry.Actions[entry.Actions.Count - 1];
                 if (last.Kind == ParseActionKind.Shift)
                 {
-                    shifts.Add((Key(token), last.State));
+                    shiftKeys[k] = Key(token);
+                    shiftTargets[k++] = last.State;
                 }
             }
 
-            var gotos = new List<(long Key, int Target)>();
+            var gotoKeys = new long[state.NonTerminalEntries.Count];
+            var gotoTargets = new int[gotoKeys.Length];
+            k = 0;
             foreach (var (symbol, action) in state.NonTerminalEntries.Entries)
             {
-                gotos.Add((Key(symbol), action.IsShiftExtra ? -1 : action.State));
+                gotoKeys[k] = Key(symbol);
+                gotoTargets[k++] = action.IsShiftExtra ? -1 : action.State;
             }
 
-            shifts.Sort((a, b) => a.Key.CompareTo(b.Key));
-            gotos.Sort((a, b) => a.Key.CompareTo(b.Key));
+            // The symbols are unique
+            Array.Sort(shiftKeys, shiftTargets);
+            Array.Sort(gotoKeys, gotoTargets);
             return new Successors
             {
-                _shiftKeys = [.. shifts.Select(s => s.Key)],
-                _shiftTargets = [.. shifts.Select(s => s.Target)],
-                _gotoKeys = [.. gotos.Select(g => g.Key)],
-                _gotoTargets = [.. gotos.Select(g => g.Target)],
+                _shiftKeys = shiftKeys,
+                _shiftTargets = shiftTargets,
+                _gotoKeys = gotoKeys,
+                _gotoTargets = gotoTargets,
             };
         }
 
@@ -807,55 +1191,6 @@ internal sealed class Minimizer(ParseTable parseTable, SyntaxGrammar syntaxGramm
         return false;
     }
 
-    private bool TokenConflicts(ParseState rightState, Symbol newToken)
-    {
-        if (newToken == Symbol.EndOfNonTerminalExtra)
-        {
-            return true;
-        }
-
-        if (newToken.IsExternal)
-        {
-            return true;
-        }
-
-        if (rightState.ReservedWords.Contains(newToken))
-        {
-            return false;
-        }
-
-        if (syntaxGrammar.ExternalTokens.Any(e => e.CorrespondingInternalToken == newToken))
-        {
-            return true;
-        }
-
-        foreach (var token in rightState.TerminalEntries.Keys)
-        {
-            if (!token.IsTerminal)
-            {
-                continue;
-            }
-
-            if (syntaxGrammar.WordToken == token && keywords.Contains(newToken))
-            {
-                continue;
-            }
-
-            if (syntaxGrammar.WordToken == newToken && keywords.Contains(token))
-            {
-                continue;
-            }
-
-            // Like tree-sitter, the index of the new token is used even for the end of the input, whose index is 0
-            if (tokenConflictMap.DoesConflict(newToken.Index, token.Index) || tokenConflictMap.DoesMatchSameString(newToken.Index, token.Index))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     private void RemoveUnusedStates()
     {
         var used = new bool[parseTable.States.Count];
@@ -943,7 +1278,7 @@ internal sealed class LexTableBuilder
     private readonly LexicalGrammar _lexicalGrammar;
     private readonly NfaCursor _cursor;
     private readonly Queue<(int StateId, List<int> NfaStates, bool EofValid)> _stateQueue = new();
-    private readonly Dictionary<(string Key, bool EofValid), int> _stateIdsByNfaStateSet = [];
+    private readonly Dictionary<(List<int> NfaStates, bool EofValid), int> _stateIdsByNfaStateSet = new(NfaStateSetComparer.Instance);
 
     private LexTableBuilder(LexicalGrammar lexicalGrammar)
     {
@@ -966,6 +1301,8 @@ internal sealed class LexTableBuilder
             keywordLexTable = keywordBuilder.Table;
         }
 
+        var words = (lexicalGrammar.Variables.Count + 63) >> 6;
+        var incompatibleTerminals = IncompatibleTerminals(lexicalGrammar, tokenConflictMap, coincidentTokenIndex, words);
         var parseStateIdsByTokenSet = new List<(TokenSet Tokens, List<int> ParseStateIds)>();
         for (var i = 0; i < parseTable.States.Count; i++)
         {
@@ -996,7 +1333,7 @@ internal sealed class LexTableBuilder
             var didMerge = false;
             foreach (var entry in parseStateIdsByTokenSet)
             {
-                if (MergeTokenSet(entry.Tokens, tokens, lexicalGrammar, tokenConflictMap, coincidentTokenIndex))
+                if (MergeTokenSet(entry.Tokens, tokens, lexicalGrammar.Variables.Count, incompatibleTerminals, words))
                 {
                     didMerge = true;
                     entry.ParseStateIds.Add(i);
@@ -1093,7 +1430,7 @@ internal sealed class LexTableBuilder
     private (int StateId, bool IsNew) AddState(List<int> nfaStates, bool eofValid)
     {
         _cursor.Reset(nfaStates);
-        var key = (string.Join(",", _cursor.StateIds), eofValid);
+        var key = (_cursor.StateIds, eofValid);
         if (_stateIdsByNfaStateSet.TryGetValue(key, out var existing))
         {
             return (existing, false);
@@ -1152,44 +1489,86 @@ internal sealed class LexTableBuilder
         }
     }
 
-    private static bool MergeTokenSet(TokenSet tokens, TokenSet other, LexicalGrammar lexicalGrammar, TokenConflictMap tokenConflictMap, CoincidentTokenIndex coincidentTokenIndex)
+    /// <summary>
+    /// The terminals which <see cref="MergeTokenSet"/> doesn't lex in the same state as each terminal: the conflicting
+    /// tokens, the tokens it matches a prefix of, and the overlapping tokens that aren't valid in the same parse state.
+    /// </summary>
+    private static ulong[] IncompatibleTerminals(LexicalGrammar lexicalGrammar, TokenConflictMap tokenConflictMap, CoincidentTokenIndex coincidentTokenIndex, int words)
     {
-        for (var i = 0; i < lexicalGrammar.Variables.Count; i++)
+        var n = lexicalGrammar.Variables.Count;
+        var result = new ulong[n * words];
+        for (var i = 0; i < n; i++)
         {
-            var symbol = Symbol.Terminal(i);
-            TokenSet setWithoutTerminal;
+            for (var j = 0; j < n; j++)
+            {
+                if (tokenConflictMap.DoesConflict(i, j) || tokenConflictMap.DoesMatchPrefix(i, j) ||
+                    (!coincidentTokenIndex.Contains(Symbol.Terminal(i), Symbol.Terminal(j)) && (tokenConflictMap.DoesOverlap(j, i) || tokenConflictMap.DoesOverlap(i, j))))
+                {
+                    result[(i * words) + (j >> 6)] |= 1UL << (j & 63);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// tree-sitter's <c>merge_token_set</c>: adds the tokens of a set to another, unless a token of one set conflicts
+    /// with a token of the other set without it (a pure condition: the rows of the incompatible terminals are
+    /// intersected with the sets).
+    /// </summary>
+    private static bool MergeTokenSet(TokenSet tokens, TokenSet other, int terminalCount, ulong[] incompatibleTerminals, int words)
+    {
+        for (var i = 0; i < terminalCount; i++)
+        {
             var inTokens = tokens.ContainsTerminal(i);
             var inOther = other.ContainsTerminal(i);
-            if (inTokens && !inOther)
+            if (inTokens != inOther && (inTokens ? other : tokens).IntersectsTerminals(incompatibleTerminals, i * words, words))
             {
-                setWithoutTerminal = other;
-            }
-            else if (!inTokens && inOther)
-            {
-                setWithoutTerminal = tokens;
-            }
-            else
-            {
-                continue;
-            }
-
-            foreach (var existing in setWithoutTerminal.Terminals)
-            {
-                if (tokenConflictMap.DoesConflict(i, existing.Index) || tokenConflictMap.DoesMatchPrefix(i, existing.Index))
-                {
-                    return false;
-                }
-
-                if (!coincidentTokenIndex.Contains(symbol, existing) &&
-                    (tokenConflictMap.DoesOverlap(existing.Index, i) || tokenConflictMap.DoesOverlap(i, existing.Index)))
-                {
-                    return false;
-                }
+                return false;
             }
         }
 
         tokens.InsertAll(other);
         return true;
+    }
+
+    /// <summary>Compares the keys of the lex states: their sets of NFA states, by their elements, and the validity of the end.</summary>
+    private sealed class NfaStateSetComparer : IEqualityComparer<(List<int> NfaStates, bool EofValid)>
+    {
+        public static readonly NfaStateSetComparer Instance = new();
+
+        public bool Equals((List<int> NfaStates, bool EofValid) x, (List<int> NfaStates, bool EofValid) y)
+        {
+            if (x.EofValid != y.EofValid || x.NfaStates.Count != y.NfaStates.Count)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < x.NfaStates.Count; i++)
+            {
+                if (x.NfaStates[i] != y.NfaStates[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        public int GetHashCode((List<int> NfaStates, bool EofValid) obj)
+        {
+            unchecked
+            {
+                var hash = obj.EofValid ? 1 : 2;
+                foreach (var id in obj.NfaStates)
+                {
+                    hash = (hash * 31) + id;
+                }
+
+                return hash;
+            }
+        }
     }
 
     private static void MinimizeLexTable(LexTable table, ParseTable parseTable)

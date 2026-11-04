@@ -25,15 +25,58 @@ internal readonly record struct ParseAction(ParseActionKind Kind, int State, boo
         new(ParseActionKind.Reduce, 0, false, symbol, childCount, dynamicPrecedence, productionId);
 }
 
+/// <summary>
+/// The actions of a terminal in a state. The parse tables of the large grammars have millions of entries before the
+/// minimization, and most entries have a single action: it is stored in the entry, the other actions in an array.
+/// </summary>
 internal sealed class ParseTableEntry : IEquatable<ParseTableEntry>
 {
-    public List<ParseAction> Actions { get; set; } = [];
+    private ParseAction _first;
+    private ParseAction[]? _others;
+    private int _count;
+
+    public ParseTableEntry()
+    {
+    }
+
+    public ParseTableEntry(ParseAction action)
+    {
+        _first = action;
+        _count = 1;
+    }
+
+    public ParseActionList Actions => new(this);
 
     public bool Reusable { get; set; } = true;
 
-    public ParseTableEntry Clone() => new() { Actions = [.. Actions], Reusable = Reusable };
+    public ParseTableEntry Clone()
+    {
+        var clone = new ParseTableEntry { Reusable = Reusable };
+        foreach (var action in Actions)
+        {
+            clone.Actions.Add(action);
+        }
 
-    public bool Equals(ParseTableEntry? other) => other is not null && Reusable == other.Reusable && Actions.SequenceEqual(other.Actions);
+        return clone;
+    }
+
+    public bool Equals(ParseTableEntry? other)
+    {
+        if (other is null || Reusable != other.Reusable || _count != other._count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < _count; i++)
+        {
+            if (Actions[i] != other.Actions[i])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     public override bool Equals(object? obj) => obj is ParseTableEntry other && Equals(other);
 
@@ -50,6 +93,123 @@ internal sealed class ParseTableEntry : IEquatable<ParseTableEntry>
             return hash;
         }
     }
+
+    /// <summary>The list of the actions of an entry, with the operations of <see cref="List{T}"/> used by the generator.</summary>
+    public readonly struct ParseActionList(ParseTableEntry entry) : IReadOnlyList<ParseAction>
+    {
+        public int Count => entry._count;
+
+        /// <summary>The action at an index, by reference so that it can be replaced.</summary>
+        public ref ParseAction this[int index]
+        {
+            get
+            {
+                if ((uint)index >= (uint)entry._count)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(index));
+                }
+
+                return ref index == 0 ? ref entry._first : ref entry._others![index - 1];
+            }
+        }
+
+        ParseAction IReadOnlyList<ParseAction>.this[int index] => this[index];
+
+        public void Add(ParseAction action)
+        {
+            if (entry._count == 0)
+            {
+                entry._first = action;
+            }
+            else
+            {
+                var others = entry._others;
+                if (others is null)
+                {
+                    others = new ParseAction[2];
+                    entry._others = others;
+                }
+                else if (entry._count - 1 == others.Length)
+                {
+                    Array.Resize(ref entry._others, others.Length * 2);
+                    others = entry._others;
+                }
+
+                others[entry._count - 1] = action;
+            }
+
+            entry._count++;
+        }
+
+        public void Clear()
+        {
+            entry._count = 0;
+            entry._first = default;
+            if (entry._others is { } others)
+            {
+                Array.Clear(others, 0, others.Length);
+            }
+        }
+
+        public bool Contains(ParseAction action)
+        {
+            foreach (var a in this)
+            {
+                if (a == action)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public void RemoveAt(int index) => RemoveRange(index, 1);
+
+        public void RemoveRange(int index, int count)
+        {
+            if (index < 0 || count < 0 || index + count > entry._count)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index));
+            }
+
+            for (var i = index; i + count < entry._count; i++)
+            {
+                this[i] = this[i + count];
+            }
+
+            for (var i = entry._count - count; i < entry._count; i++)
+            {
+                this[i] = default;
+            }
+
+            entry._count -= count;
+        }
+
+        public Enumerator GetEnumerator() => new(entry);
+
+        IEnumerator<ParseAction> IEnumerable<ParseAction>.GetEnumerator() => GetEnumerator();
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+
+        /// <summary>Enumerates the actions, without allocations.</summary>
+        public struct Enumerator(ParseTableEntry entry) : IEnumerator<ParseAction>
+        {
+            private int _index = -1;
+
+            public readonly ParseAction Current => _index == 0 ? entry._first : entry._others![_index - 1];
+
+            readonly object System.Collections.IEnumerator.Current => Current;
+
+            public bool MoveNext() => ++_index < entry._count;
+
+            public void Reset() => _index = -1;
+
+            public readonly void Dispose()
+            {
+            }
+        }
+    }
 }
 
 /// <summary>A goto action: a state, or -1 for a non-terminal extra (<c>GotoAction::ShiftExtra</c>).</summary>
@@ -61,12 +221,22 @@ internal readonly record struct GotoAction(int State)
 }
 
 /// <summary>An insertion-ordered map, like the IndexMap of the Rust code.</summary>
+/// <remarks>
+/// The parse tables of the large grammars have millions of entries before the minimization: the maps of a few entries
+/// are searched linearly, and the larger ones have a compact index of open addressing (without removals).
+/// </remarks>
 internal sealed class OrderedMap<TKey, TValue>
     where TKey : notnull
 {
-    private readonly Dictionary<TKey, int> _indices = [];
+    private const int LinearSearchCount = 8;
+
+    private static readonly IEqualityComparer<TKey> KeyComparer = EqualityComparer<TKey>.Default;
+
     private readonly List<TKey> _keys = [];
     private readonly List<TValue> _values = [];
+
+    // The indices of the keys plus one, 0 for the empty slots: a power of 2 at least twice the number of keys
+    private int[]? _slots;
 
     public int Count => _keys.Count;
 
@@ -105,11 +275,12 @@ internal sealed class OrderedMap<TKey, TValue>
         }
     }
 
-    public bool ContainsKey(TKey key) => _indices.ContainsKey(key);
+    public bool ContainsKey(TKey key) => IndexOf(key) >= 0;
 
     public bool TryGetValue(TKey key, out TValue value)
     {
-        if (_indices.TryGetValue(key, out var index))
+        var index = IndexOf(key);
+        if (index >= 0)
         {
             value = _values[index];
             return true;
@@ -121,33 +292,36 @@ internal sealed class OrderedMap<TKey, TValue>
 
     public TValue this[TKey key]
     {
-        get => _values[_indices[key]];
+        get
+        {
+            var index = IndexOf(key);
+            return index >= 0 ? _values[index] : throw new KeyNotFoundException();
+        }
+
         set
         {
-            if (_indices.TryGetValue(key, out var index))
+            var index = IndexOf(key);
+            if (index >= 0)
             {
                 _values[index] = value;
             }
             else
             {
-                _indices[key] = _keys.Count;
-                _keys.Add(key);
-                _values.Add(value);
+                Append(key, value);
             }
         }
     }
 
     public TValue GetOrAdd(TKey key, Func<TValue> factory)
     {
-        if (_indices.TryGetValue(key, out var index))
+        var index = IndexOf(key);
+        if (index >= 0)
         {
             return _values[index];
         }
 
         var value = factory();
-        _indices[key] = _keys.Count;
-        _keys.Add(key);
-        _values.Add(value);
+        Append(key, value);
         return value;
     }
 
@@ -159,6 +333,107 @@ internal sealed class OrderedMap<TKey, TValue>
             this[other._keys[i]] = other._values[i];
         }
     }
+
+    /// <summary>Makes room for a number of entries, which are then added without reallocations.</summary>
+    public void EnsureCapacity(int capacity)
+    {
+        if (capacity <= _keys.Capacity)
+        {
+            return;
+        }
+
+        _keys.Capacity = capacity;
+        _values.Capacity = capacity;
+        if (capacity > LinearSearchCount)
+        {
+            var size = LinearSearchCount * 4;
+            while (size < capacity * 2)
+            {
+                size *= 2;
+            }
+
+            if (_slots is null || _slots.Length < size)
+            {
+                Rehash(size);
+            }
+        }
+    }
+
+    private int IndexOf(TKey key)
+    {
+        if (_slots is null)
+        {
+            for (var i = 0; i < _keys.Count; i++)
+            {
+                if (KeyComparer.Equals(_keys[i], key))
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        var mask = _slots.Length - 1;
+        for (var slot = Hash(key) & mask; ; slot = (slot + 1) & mask)
+        {
+            var index = _slots[slot] - 1;
+            if (index < 0)
+            {
+                return -1;
+            }
+
+            if (KeyComparer.Equals(_keys[index], key))
+            {
+                return index;
+            }
+        }
+    }
+
+    private void Append(TKey key, TValue value)
+    {
+        _keys.Add(key);
+        _values.Add(value);
+        if (_slots is not null)
+        {
+            if (_keys.Count * 2 > _slots.Length)
+            {
+                Rehash(_slots.Length * 2);
+            }
+            else
+            {
+                AddSlot(_slots, _keys.Count - 1);
+            }
+        }
+        else if (_keys.Count > LinearSearchCount)
+        {
+            Rehash(LinearSearchCount * 4);
+        }
+    }
+
+    private void Rehash(int size)
+    {
+        _slots = new int[size];
+        for (var i = 0; i < _keys.Count; i++)
+        {
+            AddSlot(_slots, i);
+        }
+    }
+
+    private void AddSlot(int[] slots, int index)
+    {
+        var mask = slots.Length - 1;
+        var slot = Hash(_keys[index]) & mask;
+        while (slots[slot] != 0)
+        {
+            slot = (slot + 1) & mask;
+        }
+
+        slots[slot] = index + 1;
+    }
+
+    // Fibonacci hashing, the keys being small numbers
+    private static int Hash(TKey key) => (int)(unchecked((uint)KeyComparer.GetHashCode(key) * 2654435769u) >> 8);
 
     public void SetValueAt(int index, TValue value) => _values[index] = value;
 }

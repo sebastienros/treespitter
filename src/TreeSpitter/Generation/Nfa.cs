@@ -496,13 +496,69 @@ internal sealed class NfaTransition(CharacterSet characters, bool isSeparator, i
 internal sealed class NfaCursor(Nfa nfa)
 {
     private readonly Nfa _nfa = nfa;
+    private readonly List<int> _pending = [];
+    private int[] _visited = [];
+    private int _visit;
 
     public List<int> StateIds { get; private set; } = [];
 
+    /// <summary>
+    /// tree-sitter's <c>reset</c> and <c>add_states</c>: the states are the sorted states reachable from the given states
+    /// through the splits, without the splits.
+    /// </summary>
+    /// <remarks>
+    /// tree-sitter searches the list of the states to add for the targets of every split, and inserts the states in a
+    /// sorted list, which is quadratic for the large sets of states (the start states of the tokens of a lex state): the
+    /// visited states are marked instead, and sorted once. The result is the same set of states.
+    /// </remarks>
     public void Reset(List<int> states)
     {
-        StateIds = [];
-        AddStates([.. states]);
+        if (_visited.Length < _nfa.States.Count)
+        {
+            _visited = new int[_nfa.States.Count];
+            _visit = 0;
+        }
+
+        if (++_visit == int.MaxValue)
+        {
+            Array.Clear(_visited, 0, _visited.Length);
+            _visit = 1;
+        }
+
+        var result = new List<int>();
+        _pending.Clear();
+        foreach (var id in states)
+        {
+            Visit(id);
+        }
+
+        while (_pending.Count > 0)
+        {
+            var stateId = _pending[_pending.Count - 1];
+            _pending.RemoveAt(_pending.Count - 1);
+            var state = _nfa.States[stateId];
+            if (state.Kind == NfaStateKind.Split)
+            {
+                Visit(state.Left);
+                Visit(state.Right);
+            }
+            else
+            {
+                result.Add(stateId);
+            }
+        }
+
+        result.Sort();
+        StateIds = result;
+    }
+
+    private void Visit(int stateId)
+    {
+        if (_visited[stateId] != _visit)
+        {
+            _visited[stateId] = _visit;
+            _pending.Add(stateId);
+        }
     }
 
     public void ForceReset(List<int> states)
@@ -606,53 +662,6 @@ internal sealed class NfaCursor(Nfa nfa)
             {
                 yield return (state.VariableIndex, state.Precedence);
             }
-        }
-    }
-
-    public void AddStates(List<int> newStateIds)
-    {
-        var i = 0;
-        while (i < newStateIds.Count)
-        {
-            var stateId = newStateIds[i];
-            var state = _nfa.States[stateId];
-            if (state.Kind == NfaStateKind.Split)
-            {
-                var hasLeft = false;
-                var hasRight = false;
-                foreach (var id in newStateIds)
-                {
-                    if (id == state.Left)
-                    {
-                        hasLeft = true;
-                    }
-
-                    if (id == state.Right)
-                    {
-                        hasRight = true;
-                    }
-                }
-
-                if (!hasLeft)
-                {
-                    newStateIds.Add(state.Left);
-                }
-
-                if (!hasRight)
-                {
-                    newStateIds.Add(state.Right);
-                }
-            }
-            else
-            {
-                var j = StateIds.BinarySearch(stateId);
-                if (j < 0)
-                {
-                    StateIds.Insert(~j, stateId);
-                }
-            }
-
-            i++;
         }
     }
 }
