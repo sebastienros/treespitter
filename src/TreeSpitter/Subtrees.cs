@@ -372,9 +372,6 @@ internal sealed class SubtreeArena
             ref var child = ref nodes[children[first + i]];
             var childFlags = child.Flags;
             var childSymbol = child.Symbol;
-
-            // The start of the padding of the child, for the rows of the error repetitions
-            var childPosition = i == 0 ? position : position + padding + size;
             if (i == 0)
             {
                 padding = child.Padding;
@@ -396,7 +393,9 @@ internal sealed class SubtreeArena
             if (childSymbol == Language.ErrorRepeatSymbol && !Compatibility.TreeSitter026)
             {
                 // tree-sitter 0.27 refunds the extent cost of an error repetition, which the node charges again for its
-                // own extent: grouping errors doesn't change their cost
+                // own extent: grouping errors doesn't change their cost. The start of the padding of the child is
+                // computed here, the sizes already include the child.
+                var childPosition = i == 0 ? position : position + padding + size - child.Padding - child.Size;
                 errorCost += child.ErrorCost -
                     (ErrorCostPerRecovery + ErrorCostPerSkippedChar * child.Size + ErrorCostPerSkippedLine * Rows(childPosition, child.Padding, child.Size));
             }
