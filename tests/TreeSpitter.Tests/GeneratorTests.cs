@@ -39,6 +39,19 @@ public sealed class GeneratorTests
     }
 
     [Fact]
+    public void DynamicPrecedencesAreSixteenBitIntegers()
+    {
+        // Like the int16_t of tree-sitter's parse actions: tree-sitter-haskell penalizes a reduction with -1000
+        var language = Compile("""
+            document: $ => choice($.penalized, $.other),
+            penalized: $ => prec.dynamic(-1000, 'a'),
+            other: $ => 'a',
+            """, "conflicts: $ => [[$.penalized, $.other]],");
+
+        Assert.Equal("(document (other))", Parse(language, "a"));
+    }
+
+    [Fact]
     public void UnnecessaryConflictsAreReported()
     {
         var warnings = new List<string>();

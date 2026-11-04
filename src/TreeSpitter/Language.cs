@@ -15,9 +15,9 @@ internal enum ParseActionType : byte
 /// A parse action or the header of an action list, packed in 64 bits like tree-sitter's <c>TSParseActionEntry</c>.
 /// </summary>
 /// <remarks>
-/// Header: bits 0-15 the count, bit 16 reusable. Action: bits 0-1 the type, bit 2 extra, bit 3 repetition, bits 16-31 the
-/// state (shift) or the symbol (reduce), bits 32-39 the child count, bits 40-55 the production id, bits 56-63 the dynamic
-/// precedence (signed).
+/// Header: bits 0-15 the count, bit 16 reusable. Action: bits 0-1 the type, bit 2 extra, bit 3 repetition, bits 8-15 the
+/// child count, bits 16-31 the state (shift) or the symbol (reduce), bits 32-47 the production id, bits 48-63 the dynamic
+/// precedence (signed, an <c>int16_t</c> like in tree-sitter).
 /// </remarks>
 internal readonly struct ParseActionEntry(ulong value)
 {
@@ -63,19 +63,19 @@ internal readonly struct ParseActionEntry(ulong value)
     public int ChildCount
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => (int)((Value >> 32) & 0xFF);
+        get => (int)((Value >> 8) & 0xFF);
     }
 
     public ushort ProductionId
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => (ushort)(Value >> 40);
+        get => (ushort)(Value >> 32);
     }
 
     public int DynamicPrecedence
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => (sbyte)(Value >> 56);
+        get => (short)(Value >> 48);
     }
 
     public static ulong Header(int count, bool reusable) => (ulong)(uint)count | (reusable ? 0x10000UL : 0UL);
@@ -84,7 +84,7 @@ internal readonly struct ParseActionEntry(ulong value)
         (ulong)ParseActionType.Shift | (extra ? 4UL : 0) | (repetition ? 8UL : 0) | ((ulong)(ushort)state << 16);
 
     public static ulong Reduce(int symbol, int childCount, int dynamicPrecedence, int productionId) =>
-        (ulong)ParseActionType.Reduce | ((ulong)(ushort)symbol << 16) | ((ulong)(byte)childCount << 32) | ((ulong)(ushort)productionId << 40) | ((ulong)unchecked((byte)dynamicPrecedence) << 56);
+        (ulong)ParseActionType.Reduce | ((ulong)(byte)childCount << 8) | ((ulong)(ushort)symbol << 16) | ((ulong)(ushort)productionId << 32) | ((ulong)unchecked((ushort)dynamicPrecedence) << 48);
 
     public static ulong Accept() => (ulong)ParseActionType.Accept;
 

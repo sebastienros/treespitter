@@ -6,7 +6,7 @@ namespace TreeSpitter;
 public sealed partial class Language
 {
     private const uint Magic = 0x4C505354; // "TSPL"
-    private const int FormatVersion = 3;
+    private const int FormatVersion = 4;
 
     /// <summary>
     /// Serializes the language to its binary format: the parse table, the lexer automata and the metadata, compressed.
