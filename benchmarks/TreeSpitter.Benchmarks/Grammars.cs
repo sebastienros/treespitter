@@ -46,6 +46,26 @@ internal static class Grammars
         _ => throw new ArgumentException($"No generated language '{name}'.", nameof(name)),
     };
 
+    /// <summary>
+    /// Runs a comparison with the native parsers, which are tree-sitter 0.26: the runtime reproduces tree-sitter 0.27,
+    /// whose error recovery differs, and has a switch to behave like 0.26 for the comparisons.
+    /// </summary>
+    public static T As026<T>(Func<T> action)
+    {
+        var property = typeof(Parser).Assembly.GetType("TreeSpitter.Compatibility")!
+            .GetProperty("TreeSitter026", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public)!;
+        var old = property.GetValue(null);
+        property.SetValue(null, true);
+        try
+        {
+            return action();
+        }
+        finally
+        {
+            property.SetValue(null, old);
+        }
+    }
+
     /// <summary>The root of the repository.</summary>
     public static string Root()
     {

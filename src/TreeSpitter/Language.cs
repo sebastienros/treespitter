@@ -176,6 +176,18 @@ public sealed partial class Language
 
     internal ushort[] ExternalLexStates { get; set; } = [];
 
+    /// <summary>The number of "large" states of tree-sitter's tables, whose lookaheads are iterated by symbol.</summary>
+    internal int LargeStateCount { get; set; }
+
+    /// <summary>[state]: the start of the lookaheads of a small state in <see cref="LookaheadOrder"/>.</summary>
+    internal int[] LookaheadOrderStarts { get; set; } = [];
+
+    /// <summary>
+    /// The terminal lookaheads of the small states in the order of tree-sitter's lookahead iterator (the order of the
+    /// small parse table of a parser.c), which the error recovery depends on.
+    /// </summary>
+    internal ushort[] LookaheadOrder { get; set; } = [];
+
     internal ushort[] ReservedWordSetIds { get; set; } = [];
 
     /// <summary>[productionId * MaxAliasSequenceLength + childIndex]: the alias symbol, or 0.</summary>

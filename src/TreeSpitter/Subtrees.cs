@@ -79,7 +79,7 @@ internal sealed class SubtreeArena
     private readonly Language _language;
     private int[] _compareStack = new int[64];
     private readonly Stack<EditEntry> _editStack = new();
-    private readonly List<int> _balanceStack = [];
+    private readonly List<(int Node, int Position)> _balanceStack = [];
     private readonly List<int> _compressStack = [];
     private int _references;
 
@@ -246,9 +246,9 @@ internal sealed class SubtreeArena
         return index;
     }
 
-    public int NewMissingLeaf(ushort symbol, int lookaheadBytes)
+    public int NewMissingLeaf(ushort symbol, int lookaheadBytes, ushort parseState)
     {
-        var index = NewLeaf(symbol, 0, 0, lookaheadBytes, 0, false);
+        var index = NewLeaf(symbol, 0, 0, lookaheadBytes, parseState, false);
         Nodes[index].Flags |= SubtreeFlags.IsMissing;
         return index;
     }
@@ -372,6 +372,9 @@ internal sealed class SubtreeArena
             ref var child = ref nodes[children[first + i]];
             var childFlags = child.Flags;
             var childSymbol = child.Symbol;
+
+            // The start of the padding of the child, for the rows of the error repetitions
+            var childPosition = i == 0 ? position : position + padding + size;
             if (i == 0)
             {
                 padding = child.Padding;
@@ -388,22 +391,32 @@ internal sealed class SubtreeArena
                 lookaheadEnd = childLookaheadEnd;
             }
 
-            if (childSymbol != Language.ErrorRepeatSymbol)
-            {
-                errorCost += (childFlags & SubtreeFlags.IsMissing) != 0 ? ErrorCostPerMissingTree + ErrorCostPerRecovery : child.ErrorCost;
-            }
-
             var childIsExtra = (childFlags & SubtreeFlags.Extra) != 0;
             var grandchildCount = child.ChildCount;
-            if (isError && !childIsExtra && !(childSymbol == Language.ErrorSymbol && grandchildCount == 0))
+            if (childSymbol == Language.ErrorRepeatSymbol && !Compatibility.TreeSitter026)
             {
-                if ((childFlags & SubtreeFlags.Visible) != 0)
+                // tree-sitter 0.27 refunds the extent cost of an error repetition, which the node charges again for its
+                // own extent: grouping errors doesn't change their cost
+                errorCost += child.ErrorCost -
+                    (ErrorCostPerRecovery + ErrorCostPerSkippedChar * child.Size + ErrorCostPerSkippedLine * Rows(childPosition, child.Padding, child.Size));
+            }
+            else
+            {
+                if (childSymbol != Language.ErrorRepeatSymbol)
                 {
-                    errorCost += ErrorCostPerSkippedTree;
+                    errorCost += (childFlags & SubtreeFlags.IsMissing) != 0 ? ErrorCostPerMissingTree + ErrorCostPerRecovery : child.ErrorCost;
                 }
-                else if (grandchildCount > 0)
+
+                if (isError && !childIsExtra && !(childSymbol == Language.ErrorSymbol && grandchildCount == 0))
                 {
-                    errorCost += ErrorCostPerSkippedTree * child.VisibleChildCount;
+                    if ((childFlags & SubtreeFlags.Visible) != 0)
+                    {
+                        errorCost += ErrorCostPerSkippedTree;
+                    }
+                    else if (grandchildCount > 0)
+                    {
+                        errorCost += ErrorCostPerSkippedTree * child.VisibleChildCount;
+                    }
                 }
             }
 
@@ -739,10 +752,12 @@ internal sealed class SubtreeArena
         stack.Clear();
         compressStack.Clear();
         root = CopyNode(root);
-        stack.Add(root);
+
+        // The nodes and the starts of their padding, for the rows of error repetitions
+        stack.Add((root, 0));
         while (stack.Count > 0)
         {
-            var tree = stack[stack.Count - 1];
+            var (tree, position) = stack[stack.Count - 1];
             stack.RemoveAt(stack.Count - 1);
             if (Nodes[tree].RepeatDepth > 0)
             {
@@ -754,7 +769,7 @@ internal sealed class SubtreeArena
                     var n = repeatDelta;
                     for (var i = n / 2; i > 0; i /= 2)
                     {
-                        Compress(tree, i, firstOwned, firstCopy, compressStack);
+                        Compress(tree, i, firstOwned, firstCopy, position, compressStack);
                         n -= i;
                     }
                 }
@@ -762,9 +777,11 @@ internal sealed class SubtreeArena
 
             var count = Nodes[tree].ChildCount;
             var first = Nodes[tree].FirstChild;
+            var childPosition = position;
             for (var i = 0; i < count; i++)
             {
                 var child = Children[first + i];
+                var childBytes = TotalBytes(child);
                 if ((Nodes[child].Flags & SubtreeFlags.NeedsBalancing) != 0 && child >= firstOwned)
                 {
                     if (child < firstCopy)
@@ -773,8 +790,10 @@ internal sealed class SubtreeArena
                         Children[first + i] = child;
                     }
 
-                    stack.Add(child);
+                    stack.Add((child, childPosition));
                 }
+
+                childPosition += childBytes;
             }
         }
 
@@ -797,7 +816,8 @@ internal sealed class SubtreeArena
         return copy;
     }
 
-    private void Compress(int tree, int count, int firstOwned, int firstCopy, List<int> stack)
+    /// <summary>tree-sitter's <c>ts_subtree_compress</c>: the nodes of the left spine of a repetition all start at <paramref name="position"/>.</summary>
+    private void Compress(int tree, int count, int firstOwned, int firstCopy, int position, List<int> stack)
     {
         var initialSize = stack.Count;
         var symbol = Nodes[tree].Symbol;
@@ -848,12 +868,17 @@ internal sealed class SubtreeArena
             tree = stack[stack.Count - 1];
             stack.RemoveAt(stack.Count - 1);
             var child = Children[Nodes[tree].FirstChild];
-            var grandchild = Children[Nodes[child].FirstChild + Nodes[child].ChildCount - 1];
+            var last = Nodes[child].FirstChild + Nodes[child].ChildCount - 1;
+            var grandchild = Children[last];
+            var grandchildPosition = position;
+            for (var i = Nodes[child].FirstChild; i < last; i++)
+            {
+                grandchildPosition += TotalBytes(Children[i]);
+            }
 
-            // Repetitions aren't error nodes: the position is only used for the rows of error nodes
-            SummarizeChildren(grandchild, 0);
-            SummarizeChildren(child, 0);
-            SummarizeChildren(tree, 0);
+            SummarizeChildren(grandchild, grandchildPosition);
+            SummarizeChildren(child, position);
+            SummarizeChildren(tree, position);
         }
     }
 }
@@ -888,6 +913,18 @@ internal sealed class SubtreeList
 
         Array.Copy(other.Items, Items, other.Count);
         Count = other.Count;
+    }
+
+    public void Insert(int index, int subtree)
+    {
+        if (Count == Items.Length)
+        {
+            Array.Resize(ref Items, Items.Length * 2);
+        }
+
+        Array.Copy(Items, index, Items, index + 1, Count - index);
+        Items[index] = subtree;
+        Count++;
     }
 
     public void InsertRange(int index, int[] source, int sourceIndex, int count)

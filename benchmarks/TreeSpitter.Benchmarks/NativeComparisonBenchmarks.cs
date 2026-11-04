@@ -47,7 +47,7 @@ public class NativeComparisonBenchmarks
 
         // tree-sitter counts the skipped bytes in its error costs: the trees match the native parser on the same UTF-8 input
         var expected = _nativeUtf8Parser.ToSExpression(_utf8);
-        foreach (var actual in new[] { _parser.Parse(_utf8).ToSExpression(), _generatedParser.Parse(_utf8).ToSExpression() })
+        foreach (var actual in Grammars.As026(() => new[] { _parser.Parse(_utf8).ToSExpression(), _generatedParser.Parse(_utf8).ToSExpression() }))
         {
             Check(expected, actual);
         }
