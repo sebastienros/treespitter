@@ -467,7 +467,7 @@ internal sealed class LanguageBuilder(PreparedGrammar grammar, Tables tables)
         {
             var state = table.States[i];
             accept[i] = state.AcceptAction is { } symbol ? _symbolIds[symbol] : -1;
-            eof[i] = state.EofAction is { } eofAction ? eofAction.State : -1;
+            eof[i] = state.EofAction is { } eofAction ? eofAction.State : NullTransitionAtEof(state);
             transitionStart[i] = rangeStart.Count;
             var ranges = new List<(int Start, int End, int Target)>();
             foreach (var (chars, action) in state.AdvanceActions)
@@ -488,6 +488,67 @@ internal sealed class LanguageBuilder(PreparedGrammar grammar, Tables tables)
         }
 
         transitionStart[count] = rangeStart.Count;
+
+        // The lexers of tree-sitter loop forever on a cycle of null transitions at the end of the input: stop instead
+        for (var i = 0; i < count; i++)
+        {
+            for (int state = i, steps = 0; ; steps++)
+            {
+                var next = eof[state];
+                if (next < 0 || next == state)
+                {
+                    break;
+                }
+
+                if (steps >= count)
+                {
+                    eof[i] = -1;
+                    break;
+                }
+
+                state = next;
+            }
+        }
+
         return new LexAutomaton(accept, eof, transitionStart, [.. rangeStart], [.. rangeEnd], [.. rangeTarget]);
+    }
+
+    /// <summary>
+    /// The target of the transition on the null character at the end of the input, where the lookahead of tree-sitter's
+    /// lexers is 0, or -1. tree-sitter renders the leading single-character transitions of a lex state as a map when
+    /// there are at least 8 of their ranges, and the map matches the null character at the end of the input, unlike the
+    /// conditions of the other transitions, which check that the lexer isn't at the end. Grammars rely on it to match
+    /// <c>'\0'</c> at the end of the input, like the terminators of tree-sitter-go.
+    /// </summary>
+    private static int NullTransitionAtEof(LexState state)
+    {
+        var leadingCount = 0;
+        var leadingRangeCount = 0;
+        foreach (var (chars, action) in state.AdvanceActions)
+        {
+            // Ranges are half-open here, inclusive in tree-sitter
+            if (!action.InMainToken || !chars.Ranges.All(r => r.End - 1 <= r.Start + 1 && r.End - 1 <= ushort.MaxValue))
+            {
+                break;
+            }
+
+            leadingCount++;
+            leadingRangeCount += chars.RangeCount;
+        }
+
+        if (leadingRangeCount < 8)
+        {
+            return -1;
+        }
+
+        for (var i = 0; i < leadingCount; i++)
+        {
+            if (state.AdvanceActions[i].Chars.Contains(0))
+            {
+                return state.AdvanceActions[i].Action.State;
+            }
+        }
+
+        return -1;
     }
 }
