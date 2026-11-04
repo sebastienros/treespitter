@@ -6,7 +6,7 @@
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <IsPackable>true</IsPackable>
     <PackageId>TreeSpitter.Generators</PackageId>
-    <Description>Source generator for TreeSpitter: compiles tree-sitter grammars (grammar.json) at build time into precompiled parsers, with the lexer as C# code.</Description>
+    <Description>Source generator for TreeSpitter: compiles tree-sitter grammars (grammar.json) at build time into precompiled parsers, with their tables embedded in the assembly. Works from Visual Studio 2022 17.3 and the .NET 6.0.400 SDK.</Description>
     <PackageTags>tree-sitter;parser;source-generator;roslyn</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <DevelopmentDependency>true</DevelopmentDependency>
@@ -17,6 +17,8 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
+    <!-- The analyzers of the generator's own code, newer than the ones of Microsoft.CodeAnalysis.CSharp 4.3.1: they know the diagnostics of incremental generators. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" PrivateAssets="all" />
     <PackageReference Include="Meziantou.Polyfill" PrivateAssets="all" />
   </ItemGroup>
   <ItemGroup>
