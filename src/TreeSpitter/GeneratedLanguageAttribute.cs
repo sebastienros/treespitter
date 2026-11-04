@@ -18,4 +18,10 @@ public sealed class GeneratedLanguageAttribute : Attribute
 
     /// <summary>Gets the path of the <c>grammar.json</c> file.</summary>
     public string GrammarPath { get; }
+
+    /// <summary>
+    /// Gets or sets the external scanner of the grammar's <c>externals</c>: a class implementing
+    /// <see cref="IExternalScanner"/> with a parameterless constructor.
+    /// </summary>
+    public Type? ExternalScanner { get; set; }
 }

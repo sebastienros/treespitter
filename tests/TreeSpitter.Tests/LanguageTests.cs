@@ -7,10 +7,7 @@ namespace TreeSpitter.Tests;
 public sealed class LanguageTests
 {
     [Theory]
-    [InlineData("json")]
-    [InlineData("go")]
-    [InlineData("java")]
-    [InlineData("c")]
+    [MemberData(nameof(Fixtures.Grammars), MemberType = typeof(Fixtures))]
     public void ALoadedLanguageParsesLikeTheCompiledOne(string grammar)
     {
         var language = Fixtures.Language(grammar);
@@ -25,10 +22,7 @@ public sealed class LanguageTests
     }
 
     [Theory]
-    [InlineData("json")]
-    [InlineData("go")]
-    [InlineData("java")]
-    [InlineData("c")]
+    [MemberData(nameof(Fixtures.Grammars), MemberType = typeof(Fixtures))]
     public void TheGeneratedLanguageHasTheTablesOfTheCompiledOne(string grammar)
     {
         var compiled = Fixtures.Language(grammar);

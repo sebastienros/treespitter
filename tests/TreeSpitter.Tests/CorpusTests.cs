@@ -30,17 +30,11 @@ public sealed class CorpusTests
     }
 
     [Theory]
-    [InlineData("json")]
-    [InlineData("go")]
-    [InlineData("java")]
-    [InlineData("c")]
+    [MemberData(nameof(Fixtures.Grammars), MemberType = typeof(Fixtures))]
     public void TheVirtualMachineMatchesTheKnownResults(string grammar) => MatchesTheKnownResults(grammar, Fixtures.Parser(grammar));
 
     [Theory]
-    [InlineData("json")]
-    [InlineData("go")]
-    [InlineData("java")]
-    [InlineData("c")]
+    [MemberData(nameof(Fixtures.Grammars), MemberType = typeof(Fixtures))]
     public void TheGeneratedParsersMatchTheKnownResults(string grammar) => MatchesTheKnownResults(grammar, new Parser(Fixtures.GeneratedLanguage(grammar)));
 
     private void MatchesTheKnownResults(string grammar, Parser parser)

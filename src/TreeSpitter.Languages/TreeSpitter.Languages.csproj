@@ -16,10 +16,7 @@
   </ItemGroup>
   <ItemGroup>
     <!-- The grammars, compiled by the source generator. -->
-    <AdditionalFiles Include="../../grammars/json/grammar.json" Link="Grammars/json/grammar.json" />
-    <AdditionalFiles Include="../../grammars/go/grammar.json" Link="Grammars/go/grammar.json" />
-    <AdditionalFiles Include="../../grammars/java/grammar.json" Link="Grammars/java/grammar.json" />
-    <AdditionalFiles Include="../../grammars/c/grammar.json" Link="Grammars/c/grammar.json" />
+    <AdditionalFiles Include="../../grammars/*/grammar.json" LinkBase="Grammars" />
     <None Include="../../README.md" Pack="true" PackagePath="/" />
     <None Include="../../THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="licenses/THIRD-PARTY-NOTICES.txt" />
   </ItemGroup>

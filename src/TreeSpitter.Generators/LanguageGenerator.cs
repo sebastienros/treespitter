@@ -35,7 +35,16 @@ public sealed class LanguageGenerator : IIncrementalGenerator
                 var symbol = (INamedTypeSymbol)syntax.TargetSymbol;
                 var path = syntax.Attributes[0].ConstructorArguments.Length > 0 ? syntax.Attributes[0].ConstructorArguments[0].Value as string : null;
                 var ns = symbol.ContainingNamespace.IsGlobalNamespace ? null : symbol.ContainingNamespace.ToDisplayString();
-                return new Target(ns, symbol.Name, symbol.IsStatic, path ?? "", syntax.TargetNode.GetLocation().SourceTree?.FilePath ?? "", syntax.TargetNode.Span);
+                string? scanner = null;
+                foreach (var argument in syntax.Attributes[0].NamedArguments)
+                {
+                    if (argument.Key == "ExternalScanner" && argument.Value.Value is INamedTypeSymbol type)
+                    {
+                        scanner = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                    }
+                }
+
+                return new Target(ns, symbol.Name, symbol.IsStatic, path ?? "", scanner, syntax.TargetNode.GetLocation().SourceTree?.FilePath ?? "", syntax.TargetNode.Span);
             });
 
         var grammars = context.AdditionalTextsProvider
@@ -80,6 +89,7 @@ public sealed class LanguageGenerator : IIncrementalGenerator
                 ClassName = target.ClassName,
                 Accessibility = null,
                 IsStatic = target.IsStatic,
+                ExternalScanner = target.ExternalScanner,
             });
         }
         catch (Exception e) when (e is GrammarException or GrammarFormatException or InvalidOperationException)
@@ -92,7 +102,7 @@ public sealed class LanguageGenerator : IIncrementalGenerator
         output.AddSource(hintName, SourceText.From(source, Encoding.UTF8));
     }
 
-    private readonly record struct Target(string? Namespace, string ClassName, bool IsStatic, string GrammarPath, string FilePath, Microsoft.CodeAnalysis.Text.TextSpan Span);
+    private readonly record struct Target(string? Namespace, string ClassName, bool IsStatic, string GrammarPath, string? ExternalScanner, string FilePath, Microsoft.CodeAnalysis.Text.TextSpan Span);
 
     private readonly record struct GrammarFile(string Path, string Content);
 

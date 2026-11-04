@@ -6,20 +6,20 @@ License:
 
 - src/TreeSpitter/Dsl/dsl.js reproduces the behavior and the error messages of tree-sitter's
   crates/generate/src/dsl.js (commit 9632b561db2f647e9c0be9e61cf91f10671a6491).
-- src/TreeSpitter/Generation ports the parser generator of tree-sitter v0.25.10 (cli/generate: prepare_grammar,
+- src/TreeSpitter/Generation ports the parser generator of tree-sitter v0.27.1 (crates/generate: prepare_grammar,
   build_tables, render), and the parser runtime (ParserEngine, ParseStack, SubtreeArena, SyntaxTree) ports
-  lib/src/parser.c, stack.c, subtree.c and the S-expression writer of tree-sitter v0.25.10.
+  lib/src/parser.c, stack.c, subtree.c and the S-expression writer of tree-sitter v0.27.1.
 
 The repository vendors grammars and corpora of tree-sitter grammars, under grammars/, used by the tests and the
 benchmarks. The TreeSpitter.Languages package contains the parse tables and lexers generated from the grammar.json files
-of the JSON, Go, Java and C grammars, under their MIT licenses below. Each directory keeps the license of its project and
+of these grammars, and the C# ports of their external scanners, under their licenses below. Each directory keeps the license of its project and
 a SOURCE.md with its origin. benchmarks/TreeSpitter.Benchmarks/Inputs vendors two source files of tree-sitter (MIT, see
 its LICENSE and SOURCE.md) as benchmark inputs; they aren't part of the packages.
 
 ---------------------------------------------------------
 
 tree-sitter - MIT
-https://github.com/tree-sitter/tree-sitter @ v0.25.10 and 9632b561db2f647e9c0be9e61cf91f10671a6491
+https://github.com/tree-sitter/tree-sitter @ v0.27.1 and 9632b561db2f647e9c0be9e61cf91f10671a6491
 Used by: src/TreeSpitter/Dsl/dsl.js, src/TreeSpitter/Generation (port of cli/generate), and the parser runtime
 (port of lib/src/parser.c, stack.c and subtree.c)
 
@@ -48,7 +48,7 @@ SOFTWARE.
 ---------------------------------------------------------
 
 tree-sitter-json - MIT
-https://github.com/tree-sitter/tree-sitter-json @ 254c42a6476413b776221e03982ac8ae159eeb72
+https://github.com/tree-sitter/tree-sitter-json @ 001c28d7a29832b06b0e831ec77845553c89b56d
 Copyright (c) 2014 Max Brunsfeld
 Used by: grammars/json (test fixture and TreeSpitter.Languages, see its LICENSE)
 
@@ -69,6 +69,84 @@ Used by: grammars/java (test fixture and TreeSpitter.Languages, see its LICENSE)
 ---------------------------------------------------------
 
 tree-sitter-c - MIT
-https://github.com/tree-sitter/tree-sitter-c @ b780e47fc780ddc8da13afa35a3f4ed5c157823d
+https://github.com/tree-sitter/tree-sitter-c @ ae19b676b13bdcc13b7665397e6d9b14975473dd
 Copyright (c) 2014 Max Brunsfeld
 Used by: grammars/c (test fixture and TreeSpitter.Languages, see its LICENSE)
+
+---------------------------------------------------------
+
+tree-sitter-css - MIT
+https://github.com/tree-sitter/tree-sitter-css @ dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f
+Copyright (c) 2018 Max Brunsfeld
+Used by: grammars/css (test fixture and TreeSpitter.Languages, see its LICENSE), and
+src/TreeSpitter.Languages/Scanners/CssScanner.cs (port of its src/scanner.c)
+
+---------------------------------------------------------
+
+tree-sitter-embedded-template - MIT
+https://github.com/tree-sitter/tree-sitter-embedded-template @ 3499d85f0a0d937c507a4a65368f2f63772786e1
+Copyright (c) 2018 Max Brunsfeld
+Used by: grammars/embedded-template (test fixture and TreeSpitter.Languages, see its LICENSE)
+
+---------------------------------------------------------
+
+tree-sitter-ql - MIT
+https://github.com/tree-sitter/tree-sitter-ql @ 1fd627a4e8bff8c24c11987474bd33112bead857
+Copyright (c) 2019-2024 GitHub, Inc.
+Used by: grammars/ql (test fixture and TreeSpitter.Languages, see its LICENSE)
+
+---------------------------------------------------------
+
+tree-sitter-verilog - MIT
+https://github.com/tree-sitter/tree-sitter-verilog @ 227d277b6a1a5e2bf818d6206935722a7503de08
+Copyright (c) 2018-2023 Aliaksei Chapyzhenka
+Used by: grammars/verilog (test fixture and TreeSpitter.Languages, see its LICENSE)
+
+---------------------------------------------------------
+
+musl libc - MIT
+https://musl.libc.org, as vendored by tree-sitter in lib/src/wasm-stdlib/libc (v0.27.1)
+Used by: src/TreeSpitter/WideChar.cs (the tables and the logic of the ctype functions: iswalpha, iswpunct, iswspace,
+towlower, towupper, ...)
+
+Copyright © 2005-2020 Rich Felker, et al.
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+---------------------------------------------------------
+
+regex-syntax - MIT or Apache-2.0
+https://github.com/rust-lang/regex @ regex-syntax 0.8.11
+Copyright (c) 2014 The Rust Project Developers
+Used by: src/TreeSpitter/Lexing/CaseFolding.cs (generated from src/unicode_tables/case_folding_simple.rs, the simple
+case folding of the Unicode Character Database 16.0.0, Unicode License v3, https://www.unicode.org/license.txt)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit
+persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the
+Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

@@ -18,6 +18,9 @@ public sealed class CSharpGeneratorOptions
 
     /// <summary>Whether the class is static.</summary>
     public bool IsStatic { get; set; } = true;
+
+    /// <summary>The fully qualified name of the external scanner class of the language, if any.</summary>
+    public string? ExternalScanner { get; set; }
 }
 
 /// <summary>
@@ -73,7 +76,9 @@ public static class CSharpGenerator
         writer.Line("private static global::TreeSpitter.Language Create()");
         writer.Open();
         writer.Line("var language = global::TreeSpitter.Language.Load(Data);");
-        writer.Line("return language.WithLexFunction(new LexFunction(language.TableLexFunction));");
+        writer.Line(options.ExternalScanner is { } scanner
+            ? $"return language.WithLexFunction(new LexFunction(language.TableLexFunction)).WithExternalScanner(static () => new {scanner}());"
+            : "return language.WithLexFunction(new LexFunction(language.TableLexFunction));");
         writer.Close();
         writer.Close();
         writer.Line();
