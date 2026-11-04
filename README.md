@@ -39,6 +39,38 @@ like the native benchmarks.
 The speed-up is the generated parser against the native parser on the same UTF-8 input. A parse of these inputs
 allocates 72 bytes when the trees are disposed (the memory of a disposed tree goes back to its parser).
 
+All the grammars of `TreeSpitter.Languages`, on inputs made of their corpus tests (the ones without errors, repeated
+while the input stays valid: Agda and Ruby can't be repeated, and the JSDoc and OCaml type documents are a single
+comment or type), with the `quick` mode of the benchmarks (best of 2 runs):
+
+| Grammar | Input | Native | TreeSpitter VM | TreeSpitter generated | Speed-up |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Agda | 5 KB | 817 µs | 181 µs | 178 µs | 4.6× |
+| Bash | 100 KB | 43.42 ms | 16.09 ms | 15.73 ms | 2.8× |
+| C | 100 KB | 14.01 ms | 2.47 ms | 2.47 ms | 5.7× |
+| C# | 123 KB | 36.75 ms | 9.28 ms | 9.32 ms | 3.9× |
+| C++ | 125 KB | 29.76 ms | 7.88 ms | 7.89 ms | 3.8× |
+| CSS | 103 KB | 14.07 ms | 2.64 ms | 2.67 ms | 5.3× |
+| Embedded template | 100 KB | 11.05 ms | 2.40 ms | 2.31 ms | 4.8× |
+| Go | 100 KB | 16.21 ms | 3.95 ms | 4.01 ms | 4.0× |
+| HTML | 102 KB | 36.50 ms | 10.66 ms | 10.36 ms | 3.5× |
+| Haskell | 102 KB | 3.94 ms | 846 µs | 866 µs | 4.5× |
+| JSON | 100 KB | 11.45 ms | 3.06 ms | 3.07 ms | 3.7× |
+| Java | 100 KB | 14.38 ms | 3.03 ms | 3.02 ms | 4.8× |
+| JavaScript | 104 KB | 23.26 ms | 5.49 ms | 5.20 ms | 4.5× |
+| Julia | 102 KB | 34.23 ms | 6.14 ms | 6.14 ms | 5.6× |
+| OCaml | 101 KB | 32.90 ms | 5.69 ms | 5.30 ms | 6.2× |
+| PHP | 118 KB | 31.20 ms | 8.14 ms | 8.17 ms | 3.8× |
+| Python | 106 KB | 28.88 ms | 6.74 ms | 6.73 ms | 4.3× |
+| QL | 103 KB | 19.73 ms | 3.76 ms | 3.83 ms | 5.2× |
+| Razor | 104 KB | 20.87 ms | 5.87 ms | 5.86 ms | 3.6× |
+| Ruby | 15 KB | 3.58 ms | 788 µs | 760 µs | 4.7× |
+| Rust | 103 KB | 20.91 ms | 4.32 ms | 4.44 ms | 4.7× |
+| Scala | 111 KB | 35.57 ms | 11.78 ms | 11.58 ms | 3.1× |
+| TSX | 112 KB | 23.76 ms | 5.46 ms | 5.24 ms | 4.5× |
+| TypeScript | 111 KB | 23.93 ms | 5.57 ms | 5.35 ms | 4.5× |
+| Verilog | 103 KB | 23.56 ms | 7.06 ms | 7.07 ms | 3.3× |
+
 Real-world files: tree-sitter's own `parser.c` and `query.c`, and the 237 KB pretty-printed `grammar.json` of
 tree-sitter-c:
 
@@ -48,15 +80,39 @@ tree-sitter-c:
 | `parser.c` (C, 79 KB) | 7.94 ms | 7.79 ms | 1.71 ms | 4.6× |
 | `query.c` (C, 149 KB) | 16.3 ms | 15.4 ms | 3.74 ms | 4.1× |
 
-Incremental parsing: a character inserted in the middle of an identifier or a number of the 100 KB inputs, or removed,
-then the new input parsed with the edited tree, like an editor does on each keystroke:
+Incremental parsing: a character inserted in the middle of an identifier or a number of the inputs above, or removed,
+then the new input parsed with the edited tree, like an editor does on each keystroke. Both parsers get the points of
+the edits, which an editor knows (`quick-incremental`, best of 2 runs):
 
-| Input | Native full parse | Native incremental | TreeSpitter full parse | TreeSpitter incremental | Speed-up |
+| Grammar | Native full parse | Native incremental | TreeSpitter full parse | TreeSpitter incremental | Speed-up |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| JSON, 100 KB | 13.2 ms | 421 µs | 2.93 ms | 173 µs | 2.4× |
-| Go, 100 KB | 16.6 ms | 232 µs | 3.92 ms | 73 µs | 3.2× |
-| Java, 100 KB | 14.9 ms | 145 µs | 3.00 ms | 31 µs | 4.7× |
-| C, 100 KB | 14.5 ms | 300 µs | 2.36 ms | 102 µs | 2.9× |
+| Bash | 47.73 ms | 59.20 ms | 15.73 ms | 25.23 ms | 2.3× |
+| C | 13.84 ms | 187 µs | 2.40 ms | 108 µs | 1.7× |
+| C# | 37.53 ms | 7.42 ms | 9.21 ms | 3.59 ms | 2.1× |
+| C++ | 29.45 ms | 5.75 ms | 7.96 ms | 2.08 ms | 2.8× |
+| CSS | 13.92 ms | 1.23 ms | 2.60 ms | 667 µs | 1.8× |
+| Embedded template | 11.31 ms | 8.40 ms | 2.33 ms | 3.20 ms | 2.6× |
+| Go | 16.03 ms | 139 µs | 3.89 ms | 76 µs | 1.8× |
+| HTML | 36.88 ms | 419 µs | 10.37 ms | 346 µs | 1.2× |
+| Haskell | 3.85 ms | 3.26 ms | 891 µs | 876 µs | 3.7× |
+| JSON | 11.25 ms | 314 µs | 3.07 ms | 183 µs | 1.7× |
+| Java | 14.32 ms | 58 µs | 2.98 ms | 32 µs | 1.8× |
+| JavaScript | 23.58 ms | 5.80 ms | 5.25 ms | 2.11 ms | 2.7× |
+| Julia | 35.01 ms | 4.60 ms | 5.88 ms | 2.37 ms | 1.9× |
+| OCaml | 34.26 ms | 3.57 ms | 5.49 ms | 2.06 ms | 1.7× |
+| PHP | 31.46 ms | 3.72 ms | 8.07 ms | 1.88 ms | 2.0× |
+| Python | 30.07 ms | 6.31 ms | 6.77 ms | 2.76 ms | 2.3× |
+| QL | 20.11 ms | 1.61 ms | 3.82 ms | 835 µs | 1.9× |
+| Razor | 20.53 ms | 3.96 ms | 5.85 ms | 2.30 ms | 1.7× |
+| Rust | 20.70 ms | 2.40 ms | 4.28 ms | 1.20 ms | 2.0× |
+| Scala | 36.45 ms | 3.41 ms | 11.14 ms | 2.97 ms | 1.1× |
+| TSX | 22.94 ms | 2.08 ms | 5.36 ms | 1.15 ms | 1.8× |
+| TypeScript | 24.38 ms | 2.41 ms | 5.31 ms | 1.29 ms | 1.9× |
+| Verilog | 23.27 ms | 4.88 ms | 7.17 ms | 2.76 ms | 1.8× |
+
+The incremental parses are 1.7 to 3.7 times faster than the native ones, except Scala's and HTML's (1.1 and 1.2).
+Earlier versions of this table measured the native parser with the computation of the points of its edits, a scan of
+the input, which made it look 1.5 to 3 times slower than it is.
 
 Preparing a language, which tree-sitter does ahead of time with `tree-sitter generate` and a C compiler:
 
