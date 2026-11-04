@@ -481,7 +481,9 @@ internal static class InputGrammarReader
             case TokenRule t:
                 return IRule.Token(ParseRule(t.Content, true, warnings));
             default:
-                throw new GrammarException($"Unsupported rule {rule}");
+                throw new GrammarException(rule is EofRule
+                    ? "The eof() rule of tree-sitter 0.27 isn't supported yet."
+                    : $"Unsupported rule {rule}");
         }
     }
 }
@@ -1004,6 +1006,11 @@ internal sealed class GrammarFlattener
 
     public static SyntaxGrammar Flatten(IntermediateGrammar<Symbol, ExternalToken> grammar)
     {
+        if (grammar.ReservedWordSets.Count > ushort.MaxValue)
+        {
+            throw new GrammarException($"Reserved word set count {grammar.ReservedWordSets.Count} exceeds the maximum of {ushort.MaxValue}");
+        }
+
         var reservedIds = new Dictionary<string, int>(StringComparer.Ordinal);
         for (var i = 0; i < grammar.ReservedWordSets.Count; i++)
         {

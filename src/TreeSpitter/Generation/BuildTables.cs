@@ -522,25 +522,54 @@ internal sealed class Minimizer(ParseTable parseTable, SyntaxGrammar syntaxGramm
             }
         }
 
+        if (unitReductionSymbolsByState.Count == 0)
+        {
+            return;
+        }
+
+        // Like tree-sitter 0.27: the gotos first, then the shifts onto unit reduction states are redirected to the
+        // goto of the reduced symbol, when it changes the target
         foreach (var state in parseTable.States)
         {
             var done = false;
             while (!done)
             {
                 done = true;
-                state.UpdateReferencedStates((otherStateId, s) =>
+                foreach (var (symbol, action) in state.NonTerminalEntries.Entries.ToList())
                 {
-                    if (unitReductionSymbolsByState.TryGetValue(otherStateId, out var symbol))
+                    if (!action.IsShiftExtra && unitReductionSymbolsByState.TryGetValue(action.State, out var unitSymbol))
                     {
                         done = false;
-                        if (s.NonTerminalEntries.TryGetValue(symbol, out var action) && !action.IsShiftExtra)
+                        if (state.NonTerminalEntries.TryGetValue(unitSymbol, out var target) && !target.IsShiftExtra)
                         {
-                            return action.State;
+                            state.NonTerminalEntries[symbol] = target;
+                        }
+                    }
+                }
+
+                foreach (var (symbol, entry) in state.TerminalEntries.Entries.ToList())
+                {
+                    ParseTableEntry? changed = null;
+                    for (var i = 0; i < entry.Actions.Count; i++)
+                    {
+                        var action = (changed ?? entry).Actions[i];
+                        if (action.Kind == ParseActionKind.Shift &&
+                            unitReductionSymbolsByState.TryGetValue(action.State, out var unitSymbol) &&
+                            state.NonTerminalEntries.TryGetValue(unitSymbol, out var target) &&
+                            !target.IsShiftExtra &&
+                            target.State != action.State)
+                        {
+                            changed ??= entry.Clone();
+                            changed.Actions[i] = ParseAction.Shift(target.State, action.IsRepetition);
+                            done = false;
                         }
                     }
 
-                    return otherStateId;
-                });
+                    if (changed is not null)
+                    {
+                        state.TerminalEntries[symbol] = changed;
+                    }
+                }
             }
         }
     }
