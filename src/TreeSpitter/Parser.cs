@@ -91,7 +91,14 @@ public sealed partial class Language
     }
 
     internal IParserEngine CreateEngine() =>
-        _engineFactory is { } factory ? factory(this) : new ParserEngine<TableLexFunction>(this, TableLexFunction);
+        _engineFactory is { } factory ? factory(this) : CreateEngine(TableLexFunction);
+
+    /// <summary>Creates the parse loop, specialized for the lex function and the kind of parse table.</summary>
+    private IParserEngine CreateEngine<TLexer>(TLexer lexFunction)
+        where TLexer : struct, ILexFunction =>
+        ParseTable.Length > 0
+            ? new ParserEngine<TLexer, DenseParseTable>(this, lexFunction, DenseTable)
+            : new ParserEngine<TLexer, ChunkedParseTable>(this, lexFunction, ChunkedTable);
 
     /// <summary>Gets the table-driven lex function of the language, which runs its lex automata.</summary>
     [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Advanced)]
@@ -104,7 +111,7 @@ public sealed partial class Language
     public Language WithLexFunction<TLexer>(TLexer lexFunction)
         where TLexer : struct, ILexFunction
     {
-        _engineFactory = language => new ParserEngine<TLexer>(language, lexFunction);
+        _engineFactory = language => language.CreateEngine(lexFunction);
         return this;
     }
 

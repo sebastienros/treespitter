@@ -6,7 +6,7 @@ namespace TreeSpitter;
 public sealed partial class Language
 {
     private const uint Magic = 0x4C505354; // "TSPL"
-    private const int FormatVersion = 2;
+    private const int FormatVersion = 3;
 
     /// <summary>
     /// Serializes the language to its binary format: the parse table, the lexer automata and the metadata, compressed.
@@ -35,7 +35,15 @@ public sealed partial class Language
             WriteBytes(writer, SymbolFlags);
             WriteUShorts(writer, PublicSymbolMap);
             WriteStrings(writer, FieldNames);
-            WriteUShorts(writer, ParseTable);
+            WriteUShortPlanes(writer, ParseTable);
+            if (ParseTable.Length == 0)
+            {
+                writer.Write(ParseTableChunkShift);
+                writer.Write(ParseTableChunksPerRow);
+                WriteUShortPlanes(writer, ParseTableChunkIndex);
+                WriteUShortPlanes(writer, ParseTableChunks);
+            }
+
             writer.Write(ParseActions.Length);
             foreach (var action in ParseActions)
             {
@@ -121,7 +129,14 @@ public sealed partial class Language
         language.SymbolFlags = ReadBytes(reader);
         language.PublicSymbolMap = ReadUShorts(reader);
         language.FieldNames = ReadStrings(reader);
-        language.ParseTable = ReadUShorts(reader);
+        language.ParseTable = ReadUShortPlanes(reader);
+        if (language.ParseTable.Length == 0)
+        {
+            language.ParseTableChunkShift = reader.ReadInt32();
+            language.ParseTableChunksPerRow = reader.ReadInt32();
+            language.ParseTableChunkIndex = ReadUShortPlanes(reader);
+            language.ParseTableChunks = ReadUShortPlanes(reader);
+        }
         var rawActions = new ulong[reader.ReadInt32()];
         ReadBulk(reader, rawActions, sizeof(ulong));
         var actions = new ParseActionEntry[rawActions.Length];
@@ -209,6 +224,40 @@ public sealed partial class Language
     {
         var values = new ushort[reader.ReadInt32()];
         ReadBulk(reader, values, sizeof(ushort));
+        return values;
+    }
+
+    /// <summary>
+    /// Writes the low bytes of the values, then their high bytes: the parse tables compress better this way (by 20% for
+    /// the chunks of Verilog), the high bytes being mostly the same.
+    /// </summary>
+    private static void WriteUShortPlanes(BinaryWriter writer, ushort[] values)
+    {
+        writer.Write(values.Length);
+        var bytes = new byte[values.Length * 2];
+        for (var i = 0; i < values.Length; i++)
+        {
+            bytes[i] = (byte)values[i];
+            bytes[values.Length + i] = (byte)(values[i] >> 8);
+        }
+
+        writer.Write(bytes);
+    }
+
+    private static ushort[] ReadUShortPlanes(BinaryReader reader)
+    {
+        var values = new ushort[reader.ReadInt32()];
+        var bytes = reader.ReadBytes(values.Length * 2);
+        if (bytes.Length != values.Length * 2)
+        {
+            throw new EndOfStreamException();
+        }
+
+        for (var i = 0; i < values.Length; i++)
+        {
+            values[i] = (ushort)(bytes[i] | (bytes[values.Length + i] << 8));
+        }
+
         return values;
     }
 
