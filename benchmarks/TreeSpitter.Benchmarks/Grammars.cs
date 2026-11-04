@@ -16,8 +16,44 @@ internal static class Grammars
         "go" => Go(size),
         "java" => Java(size),
         "c" => C(size),
-        _ => throw new ArgumentException($"No input for the grammar '{name}'.", nameof(name)),
+        _ => FromCorpus(name, size),
     };
+
+    /// <summary>
+    /// An input of about <paramref name="size"/> chars made of the inputs of the corpus tests of a grammar: the ones
+    /// which parse without errors, alone and one after the other, repeated.
+    /// </summary>
+    public static string FromCorpus(string name, int size)
+    {
+        var parser = new Parser(GeneratedLanguage(name));
+        var tests = Testing.Corpus.Load(System.IO.Path.Combine(Root(), "grammars", name, "corpus"))
+            .Where(t => !t.Skip && !t.Attributes.Any(a => a.StartsWith(":language(", StringComparison.Ordinal)) && !t.Expected.Contains("ERROR") && !t.Expected.Contains("MISSING"))
+            .ToList();
+        var block = new StringBuilder();
+        foreach (var test in tests)
+        {
+            var length = block.Length;
+            block.Append(test.Input).Append('\n');
+            using var tree = parser.Parse(block.ToString());
+            if (tree.HasError)
+            {
+                block.Length = length;
+            }
+        }
+
+        if (block.Length == 0)
+        {
+            throw new ArgumentException($"No corpus input of the grammar '{name}' parses without errors.", nameof(name));
+        }
+
+        var builder = new StringBuilder();
+        while (builder.Length < size)
+        {
+            builder.Append(block);
+        }
+
+        return builder.ToString();
+    }
 
     private static readonly Dictionary<string, Language> Languages = [];
 
