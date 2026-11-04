@@ -113,6 +113,11 @@ internal sealed class ParseStack
 
     public void Clear()
     {
+        for (var i = 0; i < _headCount; i++)
+        {
+            ReleaseSummary(ref _heads[i]);
+        }
+
         _headCount = 0;
         AddHead(new StackHead { Node = _baseNode, Status = StackStatus.Active });
     }
@@ -391,13 +396,29 @@ internal sealed class ParseStack
 
     public void RecordSummary(int version, int maxDepth)
     {
-        _summary = [];
+        _summary = _summaryPool.Count > 0 ? _summaryPool.Pop() : [];
         _summaryMaxDepth = maxDepth;
         Iterate(version, IterationKind.Summarize, 0, false);
+        ReleaseSummary(ref _heads[version]);
         _heads[version].Summary = _summary;
         _summary = null;
     }
 
+    /// <summary>
+    /// Releases the summary of a head, which owns it like in tree-sitter (<c>stack_head_delete</c>): the lists are
+    /// reused by the next summaries, error recovery records one each time a version is paused.
+    /// </summary>
+    private void ReleaseSummary(ref StackHead head)
+    {
+        if (head.Summary is { } summary)
+        {
+            summary.Clear();
+            _summaryPool.Push(summary);
+            head.Summary = null;
+        }
+    }
+
+    private readonly Stack<List<StackSummaryEntry>> _summaryPool = new();
     private List<StackSummaryEntry>? _summary;
     private int _summaryMaxDepth;
 
@@ -658,6 +679,7 @@ internal sealed class ParseStack
 
     public void RemoveVersion(int version)
     {
+        ReleaseSummary(ref _heads[version]);
         Array.Copy(_heads, version + 1, _heads, version, _headCount - version - 1);
         _headCount--;
     }
@@ -674,9 +696,14 @@ internal sealed class ParseStack
         if (target.Summary is not null && source.Summary is null)
         {
             source.Summary = target.Summary;
+            target.Summary = null;
         }
 
+        ReleaseSummary(ref target);
         target = source;
+
+        // The summary of the source is the target's now
+        source.Summary = null;
         RemoveVersion(v1);
     }
 

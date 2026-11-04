@@ -1248,10 +1248,14 @@ internal sealed class ParserEngine<TLexer, TTable> : IParserEngine
         return hasShiftAction;
     }
 
+    private readonly List<StackSlice> _recoverSlices = [];
+
     private bool RecoverToState(int version, int depth, ushort goalState)
     {
-        var pop = _stack.PopCount(version, depth);
-        var slices = new List<StackSlice>(pop);
+        // A copy of the slices: popping the errors below reuses the list of the stack
+        var slices = _recoverSlices;
+        slices.Clear();
+        slices.AddRange(_stack.PopCount(version, depth));
         var previousVersion = VersionNone;
 
         for (var i = 0; i < slices.Count; i++)
