@@ -29,6 +29,39 @@ public sealed class CorpusTests
         Assert.Equal(result.Expected, result.Actual);
     }
 
+    [Fact]
+    public void ATestWithTheErrorAttributePassesWhenTheTreeHasAnError()
+    {
+        // tree-sitter test doesn't compare the trees of these tests, whose expected outputs are often stale
+        var tests = TreeSpitter.Testing.Corpus.Parse("""
+            ==================
+            Stale
+            :error
+            ==================
+
+            [1,
+
+            ---
+
+            (document (array (number) (ERROR)))
+
+            ==================
+            Without error
+            :error
+            ==================
+
+            [1]
+
+            ---
+
+            (document (array (number)))
+
+            """);
+
+        Assert.True(TreeSpitter.Testing.Corpus.Run(Fixtures.Parser("json"), tests[0]).Passed);
+        Assert.False(TreeSpitter.Testing.Corpus.Run(Fixtures.Parser("json"), tests[1]).Passed);
+    }
+
     [Theory]
     [MemberData(nameof(Fixtures.Grammars), MemberType = typeof(Fixtures))]
     public void TheVirtualMachineMatchesTheKnownResults(string grammar) => MatchesTheKnownResults(grammar, Fixtures.Parser(grammar));
