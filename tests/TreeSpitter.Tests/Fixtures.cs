@@ -21,7 +21,15 @@ internal static class Fixtures
 
     public static string GrammarDirectory(string name) => Path.Combine(AppContext.BaseDirectory, "Grammars", name);
 
-    public static string GrammarJs(string name) => Path.Combine(GrammarDirectory(name), "grammar.js");
+    /// <summary>
+    /// The grammar.js of a grammar: <c>name/grammar.js</c>, or <c>name/name/grammar.js</c> for the grammars vendored with
+    /// the layout of their repository, because they require files of sibling directories (<c>../common</c>).
+    /// </summary>
+    public static string GrammarJs(string name)
+    {
+        var path = Path.Combine(GrammarDirectory(name), "grammar.js");
+        return File.Exists(path) ? path : Path.Combine(GrammarDirectory(name), name, "grammar.js");
+    }
 
     public static string GrammarJson(string name) => Path.Combine(GrammarDirectory(name), "grammar.json");
 

@@ -140,7 +140,9 @@ internal static class Grammars
         {
             if (File.Exists(System.IO.Path.Combine(directory, "TreeSpitter.slnx")))
             {
-                return System.IO.Path.Combine(directory, "grammars", name, "grammar.js");
+                // The grammars which require files of sibling directories keep the layout of their repository
+                var path = System.IO.Path.Combine(directory, "grammars", name, "grammar.js");
+                return File.Exists(path) ? path : System.IO.Path.Combine(directory, "grammars", name, name, "grammar.js");
             }
         }
 
