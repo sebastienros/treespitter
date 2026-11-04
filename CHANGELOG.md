@@ -38,6 +38,8 @@ releases are `v*.*.*` tags, see [docs/release.md](docs/release.md).
 
 ### Changed
 
+- `TreeSpitter.Generators` references Microsoft.CodeAnalysis.CSharp 4.3.1 (from 4.14), the oldest version with the APIs it
+  uses: the generator loads from Visual Studio 2022 17.3 and the .NET 6.0.4xx SDK (instead of 17.14 and 9.0.3xx).
 - The generator and the runtime are ports of tree-sitter v0.27.1 (from v0.25.10): identical reductions aren't
   conflicts, right associativity wins mixed precedence ties, the indirect recursion check runs on the flattened
   productions, unused rules are the ones unreachable from the start rule, the word rule, the extras, the externals and

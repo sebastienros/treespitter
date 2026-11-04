@@ -6,7 +6,20 @@
     <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
     <PackageVersion Include="Jint" Version="4.17.0" />
     <PackageVersion Include="Meziantou.Polyfill" Version="1.0.170" />
-    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+    <!-- The analyzers of the code of TreeSpitter.Generators, at build time only: they can be updated. -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" />
+    <!--
+      Pinned: the Roslyn API of the TreeSpitter.Generators source generator. A generator only loads in a compiler at least
+      as new as the Microsoft.CodeAnalysis it references, so this version is the oldest Visual Studio and .NET SDK in which
+      the package works. 4.3 is the oldest version with the APIs the generator uses (4.2 has no
+      SyntaxProvider.ForAttributeWithMetadataName), and 4.3.1 is its release for Visual Studio 2022 17.3 and the .NET 6.0.4xx
+      SDK. The versions and their Visual Studio and SDK releases are listed
+      in https://github.com/dotnet/roslyn/blob/main/docs/wiki/NuGet-packages.md (4.8 is Visual Studio 17.8 and .NET 8,
+      4.12 is 17.12 and .NET 9, 5.0 is Visual Studio 2026 and .NET 10).
+      Dependabot ignores it (.github/dependabot.yml). Raise it only when the generator needs a newer Roslyn API, knowing
+      that it drops the older Visual Studio and SDK versions, and say so in the changelog.
+    -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.3.1" />
     <PackageVersion Include="TreeSitter.DotNet" Version="1.3.0" />
     <PackageVersion Include="xunit.v3.mtp-v2" Version="4.0.2" />
   </ItemGroup>

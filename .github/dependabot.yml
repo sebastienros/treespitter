@@ -4,6 +4,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Pinned to the oldest Roslyn with the APIs of the source generator, which then loads in older Visual Studio and
+      # .NET SDK versions: see the comment of its version in Directory.Packages.props
+      - dependency-name: "Microsoft.CodeAnalysis.CSharp"
     groups:
       nuget:
         patterns:
