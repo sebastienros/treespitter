@@ -1,0 +1,8 @@
+# Random edits of IncrementalParsingTests whose undo doesn't give the original tree (file: test name (trial n)), with
+# the native parser too: the C scanner serializes the identifier of a quoted string ({id|...|id}), an int32_t array,
+# with a memcpy of one byte per character, so a deserialized identifier gets only the first bytes back and keeps the
+# other bytes of the array. When an incremental parse reuses the opening delimiter of a quoted string with a fresh
+# scanner, the closing delimiter of an identifier of two characters or more doesn't match anymore.
+attributes: Item extension (trial 1)
+attributes: Item extension (trial 3)
+expressions: Constants (trial 3)

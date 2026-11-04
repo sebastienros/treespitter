@@ -7,7 +7,7 @@ namespace TreeSpitter;
 /// </summary>
 public static class WideChar
 {
-    private static readonly byte[] Alpha =
+    private static ReadOnlySpan<byte> Alpha =>
     [
         18, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 17, 34, 35, 36, 17, 37, 38,
         39, 40, 41, 42, 43, 44, 17, 45, 46, 47, 16, 16, 48, 16, 16, 16, 16, 16, 16, 16, 49, 50, 51, 16,
@@ -174,7 +174,7 @@ public static class WideChar
         255, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ];
 
-    private static readonly byte[] Punct =
+    private static ReadOnlySpan<byte> Punct =>
     [
         18, 16, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 16, 16, 34, 35, 16, 36, 37,
         38, 39, 40, 41, 42, 43, 16, 44, 45, 46, 17, 17, 47, 17, 17, 17, 17, 17, 17, 48, 49, 50, 51, 52,
@@ -345,7 +345,7 @@ public static class WideChar
         7, 0, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ];
 
-    private static readonly byte[] CaseTable =
+    private static ReadOnlySpan<byte> CaseTable =>
     [
         7, 8, 9, 10, 11, 12, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 13, 6, 6, 14, 6, 6, 6, 6,
         6, 6, 6, 6, 15, 16, 17, 18, 6, 19, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 20, 21, 6, 6,
@@ -485,7 +485,7 @@ public static class WideChar
         0, 16385, -16384, 0, 8193, -8192, 0, 8193, -8192, 0, 8705, -8704,
     ];
 
-    private static readonly byte[] CaseRuleBases =
+    private static ReadOnlySpan<byte> CaseRuleBases =>
     [
         0, 6, 39, 81, 111, 119, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 124, 0, 0, 127, 0, 0, 0, 0,
         0, 0, 0, 0, 131, 142, 146, 151, 0, 170, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 180, 196, 0, 0,
@@ -511,7 +511,7 @@ public static class WideChar
         0, 0, 0, 0, 0, 0, 0, 0,
     ];
 
-    private static readonly byte[] CaseExceptions =
+    private static ReadOnlySpan<byte> CaseExceptions =>
     [
         48, 12, 49, 13, 120, 14, 127, 15, 128, 16, 129, 17, 134, 18, 137, 19, 138, 19, 142, 20, 143, 21, 144, 22,
         147, 19, 148, 23, 149, 24, 150, 25, 151, 26, 154, 27, 156, 25, 157, 28, 158, 29, 159, 30, 166, 31, 169, 31,
@@ -591,11 +591,11 @@ public static class WideChar
         var y = c % 3;
 
         // The entry of the two-level base-6 table
-        uint v = CaseTable[CaseTable[b] * 86 + x];
+        uint v = CaseTable[(int)(CaseTable[(int)b] * 86 + x)];
         v = (uint)(v * (y == 0 ? 2048 : y == 1 ? 342 : 57) >> 11) % 6;
 
         // The rule of the block: rules 0 and 1 are lower and upper case with a delta
-        var r = CaseRules[CaseRuleBases[b] + v];
+        var r = CaseRules[CaseRuleBases[(int)b] + v];
         var rt = r & 255;
         var rd = r >> 8;
         if (rt < 2)

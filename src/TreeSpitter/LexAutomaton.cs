@@ -27,7 +27,7 @@ internal sealed class LexAutomaton
         {
             for (var i = transitionStart[state]; i < transitionStart[state + 1]; i++)
             {
-                for (var c = rangeStart[i]; c <= rangeEnd[i] && c < 128; c++)
+                for (var c = Math.Max(rangeStart[i], 0); c <= rangeEnd[i] && c < 128; c++)
                 {
                     Ascii[state * 128 + c] = rangeTarget[i] + 1;
                 }
@@ -61,7 +61,10 @@ internal sealed class LexAutomaton
     /// <summary>The index of the first transition of each state in the range arrays, with a last entry for the end.</summary>
     public int[] TransitionStart { get; }
 
-    /// <summary>The first code point of each transition.</summary>
+    /// <summary>
+    /// The first code point of each transition. The transition on invalid UTF-8 (<see cref="Lexer.DecodeError"/>), where
+    /// tree-sitter's lexers have one, is a range [-1, -1].
+    /// </summary>
     public int[] RangeStart { get; }
 
     /// <summary>The last code point (inclusive) of each transition.</summary>
@@ -73,11 +76,14 @@ internal sealed class LexAutomaton
     /// <summary>[state * 128 + c]: the target of the transition on an ASCII code point plus one, or 0.</summary>
     public int[] Ascii { get; }
 
-    /// <summary>The transition of a state on a code point: the target (with <see cref="SkipFlag"/>), or -1.</summary>
+    /// <summary>
+    /// The transition of a state on a code point, or on <see cref="Lexer.DecodeError"/>: the target (with
+    /// <see cref="SkipFlag"/>), or -1.
+    /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int Transition(int state, int c)
     {
-        if (c < 128)
+        if ((uint)c < 128)
         {
             return Ascii[(state << 7) + c] - 1;
         }

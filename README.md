@@ -5,16 +5,18 @@
 TreeSpitter is a C# port of [tree-sitter](https://tree-sitter.github.io): `grammar.js` files are evaluated with
 [Jint](https://github.com/sebastienros/jint), compiled to LR(1) parse tables and lexer automata exactly like
 `tree-sitter generate` does, and run by a port of the tree-sitter GLR parser, error recovery included. Languages can
-also be precompiled by a source generator, with their lexer compiled to C#.
+also be precompiled by a source generator, which embeds their compiled tables in an assembly: they load in
+milliseconds instead of being compiled when the program runs (seconds, 40 s for C++).
 
 ```
 grammar.js ──Jint──▶ grammar AST ──▶ parse tables + lexer automata (bytecode) ──▶ GLR virtual machine ──▶ syntax tree
                                                         └──▶ source generator ──▶ precompiled parser
 ```
 
-The trees are the trees of tree-sitter: all the corpus tests of the vendored JSON, Go, Java and C grammars pass, and the
-benchmarks check that the trees are identical to the native parsers' on every input, real-world files and files with
-syntax errors included.
+The trees are the trees of tree-sitter. `TreeSpitter.Languages` ships the 27 grammars of the TreeSitter.DotNet package,
+with their external scanners ported to C#: their corpus tests pass, and the benchmarks check that the trees are identical
+to the native parsers' on every corpus input and on random edits of them, real-world files and files with syntax errors
+included.
 
 ## Performance
 
@@ -37,6 +39,38 @@ like the native benchmarks.
 The speed-up is the generated parser against the native parser on the same UTF-8 input. A parse of these inputs
 allocates 72 bytes when the trees are disposed (the memory of a disposed tree goes back to its parser).
 
+All the grammars of `TreeSpitter.Languages`, on inputs made of their corpus tests (the ones without errors, repeated
+while the input stays valid: Agda and Ruby can't be repeated, and the JSDoc and OCaml type documents are a single
+comment or type), with the `quick` mode of the benchmarks (best of 2 runs):
+
+| Grammar | Input | Native | TreeSpitter VM | TreeSpitter generated | Speed-up |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Agda | 5 KB | 817 µs | 181 µs | 178 µs | 4.6× |
+| Bash | 100 KB | 43.42 ms | 16.09 ms | 15.73 ms | 2.8× |
+| C | 100 KB | 14.01 ms | 2.47 ms | 2.47 ms | 5.7× |
+| C# | 123 KB | 36.75 ms | 9.28 ms | 9.32 ms | 3.9× |
+| C++ | 125 KB | 29.76 ms | 7.88 ms | 7.89 ms | 3.8× |
+| CSS | 103 KB | 14.07 ms | 2.64 ms | 2.67 ms | 5.3× |
+| Embedded template | 100 KB | 11.05 ms | 2.40 ms | 2.31 ms | 4.8× |
+| Go | 100 KB | 16.21 ms | 3.95 ms | 4.01 ms | 4.0× |
+| HTML | 102 KB | 36.50 ms | 10.66 ms | 10.36 ms | 3.5× |
+| Haskell | 102 KB | 3.94 ms | 846 µs | 866 µs | 4.5× |
+| JSON | 100 KB | 11.45 ms | 3.06 ms | 3.07 ms | 3.7× |
+| Java | 100 KB | 14.38 ms | 3.03 ms | 3.02 ms | 4.8× |
+| JavaScript | 104 KB | 23.26 ms | 5.49 ms | 5.20 ms | 4.5× |
+| Julia | 102 KB | 34.23 ms | 6.14 ms | 6.14 ms | 5.6× |
+| OCaml | 101 KB | 32.90 ms | 5.69 ms | 5.30 ms | 6.2× |
+| PHP | 118 KB | 31.20 ms | 8.14 ms | 8.17 ms | 3.8× |
+| Python | 106 KB | 28.88 ms | 6.74 ms | 6.73 ms | 4.3× |
+| QL | 103 KB | 19.73 ms | 3.76 ms | 3.83 ms | 5.2× |
+| Razor | 104 KB | 20.87 ms | 5.87 ms | 5.86 ms | 3.6× |
+| Ruby | 15 KB | 3.58 ms | 788 µs | 760 µs | 4.7× |
+| Rust | 103 KB | 20.91 ms | 4.32 ms | 4.44 ms | 4.7× |
+| Scala | 111 KB | 35.57 ms | 11.78 ms | 11.58 ms | 3.1× |
+| TSX | 112 KB | 23.76 ms | 5.46 ms | 5.24 ms | 4.5× |
+| TypeScript | 111 KB | 23.93 ms | 5.57 ms | 5.35 ms | 4.5× |
+| Verilog | 103 KB | 23.56 ms | 7.06 ms | 7.07 ms | 3.3× |
+
 Real-world files: tree-sitter's own `parser.c` and `query.c`, and the 237 KB pretty-printed `grammar.json` of
 tree-sitter-c:
 
@@ -46,15 +80,39 @@ tree-sitter-c:
 | `parser.c` (C, 79 KB) | 7.94 ms | 7.79 ms | 1.71 ms | 4.6× |
 | `query.c` (C, 149 KB) | 16.3 ms | 15.4 ms | 3.74 ms | 4.1× |
 
-Incremental parsing: a character inserted in the middle of an identifier or a number of the 100 KB inputs, or removed,
-then the new input parsed with the edited tree, like an editor does on each keystroke:
+Incremental parsing: a character inserted in the middle of an identifier or a number of the inputs above, or removed,
+then the new input parsed with the edited tree, like an editor does on each keystroke. Both parsers get the points of
+the edits, which an editor knows (`quick-incremental`, best of 2 runs):
 
-| Input | Native full parse | Native incremental | TreeSpitter full parse | TreeSpitter incremental | Speed-up |
+| Grammar | Native full parse | Native incremental | TreeSpitter full parse | TreeSpitter incremental | Speed-up |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| JSON, 100 KB | 13.2 ms | 421 µs | 2.93 ms | 173 µs | 2.4× |
-| Go, 100 KB | 16.6 ms | 232 µs | 3.92 ms | 73 µs | 3.2× |
-| Java, 100 KB | 14.9 ms | 145 µs | 3.00 ms | 31 µs | 4.7× |
-| C, 100 KB | 14.5 ms | 300 µs | 2.36 ms | 102 µs | 2.9× |
+| Bash | 47.73 ms | 59.20 ms | 15.73 ms | 25.23 ms | 2.3× |
+| C | 13.84 ms | 187 µs | 2.40 ms | 108 µs | 1.7× |
+| C# | 37.53 ms | 7.42 ms | 9.21 ms | 3.59 ms | 2.1× |
+| C++ | 29.45 ms | 5.75 ms | 7.96 ms | 2.08 ms | 2.8× |
+| CSS | 13.92 ms | 1.23 ms | 2.60 ms | 667 µs | 1.8× |
+| Embedded template | 11.31 ms | 8.40 ms | 2.33 ms | 3.20 ms | 2.6× |
+| Go | 16.03 ms | 139 µs | 3.89 ms | 76 µs | 1.8× |
+| HTML | 36.88 ms | 419 µs | 10.37 ms | 346 µs | 1.2× |
+| Haskell | 3.85 ms | 3.26 ms | 891 µs | 876 µs | 3.7× |
+| JSON | 11.25 ms | 314 µs | 3.07 ms | 183 µs | 1.7× |
+| Java | 14.32 ms | 58 µs | 2.98 ms | 32 µs | 1.8× |
+| JavaScript | 23.58 ms | 5.80 ms | 5.25 ms | 2.11 ms | 2.7× |
+| Julia | 35.01 ms | 4.60 ms | 5.88 ms | 2.37 ms | 1.9× |
+| OCaml | 34.26 ms | 3.57 ms | 5.49 ms | 2.06 ms | 1.7× |
+| PHP | 31.46 ms | 3.72 ms | 8.07 ms | 1.88 ms | 2.0× |
+| Python | 30.07 ms | 6.31 ms | 6.77 ms | 2.76 ms | 2.3× |
+| QL | 20.11 ms | 1.61 ms | 3.82 ms | 835 µs | 1.9× |
+| Razor | 20.53 ms | 3.96 ms | 5.85 ms | 2.30 ms | 1.7× |
+| Rust | 20.70 ms | 2.40 ms | 4.28 ms | 1.20 ms | 2.0× |
+| Scala | 36.45 ms | 3.41 ms | 11.14 ms | 2.97 ms | 1.1× |
+| TSX | 22.94 ms | 2.08 ms | 5.36 ms | 1.15 ms | 1.8× |
+| TypeScript | 24.38 ms | 2.41 ms | 5.31 ms | 1.29 ms | 1.9× |
+| Verilog | 23.27 ms | 4.88 ms | 7.17 ms | 2.76 ms | 1.8× |
+
+The incremental parses are 1.7 to 3.7 times faster than the native ones, except Scala's and HTML's (1.1 and 1.2).
+Earlier versions of this table measured the native parser with the computation of the points of its edits, a scan of
+the input, which made it look 1.5 to 3 times slower than it is.
 
 Preparing a language, which tree-sitter does ahead of time with `tree-sitter generate` and a C compiler:
 
@@ -75,7 +133,7 @@ skipping of the self-looping lexer states (white space, comments, strings).
 
 ```bash
 dotnet add package TreeSpitter            # the library: grammar.js → parser
-dotnet add package TreeSpitter.Languages  # precompiled JSON, Go, Java and C parsers
+dotnet add package TreeSpitter.Languages  # the precompiled parsers of 27 grammars
 dotnet add package TreeSpitter.Generators # the source generator, for your own grammars
 dotnet tool install -g TreeSpitter.Cli    # the treespitter command
 ```
@@ -131,13 +189,18 @@ incremental parses: the benchmarks compare them on the random edits of tree-sitt
 
 ### Precompiled parsers
 
-The parsers of `TreeSpitter.Languages` are compiled at build time:
+The parsers of `TreeSpitter.Languages` are compiled at build time: `Agda`, `Bash`, `C`, `Cpp`, `CSharp`, `Css`,
+`EmbeddedTemplate`, `Go`, `Haskell`, `Html`, `Java`, `JavaScript`, `JsDoc`, `Json`, `Julia`, `OCaml`, `OCamlType`,
+`Php`, `Python`, `Ql`, `Razor`, `Ruby`, `Rust`, `Scala`, `Tsx`, `TypeScript` and `Verilog`.
 
 ```csharp
 using TreeSpitter.Languages;
 
 using var tree = Go.CreateParser().ParseFile("main.go");
 ```
+
+Their assembly is 6.0 MB for the 27 grammars (the deflated tables are most of it), the same on every platform: the
+native libraries of TreeSitter.DotNet are 66 MB per platform.
 
 For your own grammars, add `TreeSpitter.Generators` and the `grammar.json` of the grammar (from `tree-sitter generate`, or
 `treespitter grammar grammar.js`) as an additional file:
@@ -151,15 +214,24 @@ For your own grammars, add `TreeSpitter.Generators` and the `grammar.json` of th
 ```
 
 ```csharp
-[TreeSpitter.GeneratedLanguage("my-language/grammar.json")]
+[TreeSpitter.GeneratedLanguage("my-language/grammar.json", ExternalScanner = typeof(MyLanguageScanner))]
 public static partial class MyLanguage;
 
 var tree = MyLanguage.CreateParser().Parse(source);
 ```
 
-The generated class embeds the tables (`Language.Save()`), loads them once (`Language.Load()`), and compiles the lexer
-automata to C# when they're small enough for the JIT to optimize them. `treespitter generate` writes the same source
+The generated class embeds the tables (`Language.Save()`), loads them once (`Language.Load()`, from the data of the
+assembly, without a copy), and matches the keywords with code. What it saves is the preparation of the language: the
+evaluation of `grammar.js` and the compilation of the tables (a few seconds for most grammars, up to 40 s and 2 GB of
+memory for C++, C# and Razor), done at build time. The parses are as fast as the ones of a language compiled at
+runtime, which runs the same tables. `treespitter generate` writes the same source
 to a file.
+
+A grammar with `externals` needs its external scanner (`src/scanner.c`) ported to an `IExternalScanner`: `Scan`,
+`Serialize` and `Deserialize` with the `TSLexer` API on `Lexer` (`Lookahead`, `Advance`, `MarkEnd`, `GetColumn`,
+`ResultSymbol`...), and the `iswalpha`-like functions of `WideChar`. The scanners of `TreeSpitter.Languages`
+(`src/TreeSpitter.Languages/Scanners`) are examples. A language compiled at runtime gets its scanner with
+`language.WithExternalScanner(() => new MyLanguageScanner())`.
 
 ### Grammars
 
@@ -194,15 +266,42 @@ of `tree-sitter generate` v0.27.1 and reports the same errors (unresolved confli
 port of the v0.27.1 runtime. The parse tables have the states of the `parser.c` files of the grammars. The `eof()` rule
 of 0.27 isn't supported yet.
 
-| Grammar | Corpus tests passing | Parse states | Lex states |
-| --- | ---: | ---: | ---: |
-| [tree-sitter-json](https://github.com/tree-sitter/tree-sitter-json) | 7 / 7 | 32 | 44 |
-| [tree-sitter-go](https://github.com/tree-sitter/tree-sitter-go) | 67 / 67 | 1442 | 165 |
-| [tree-sitter-java](https://github.com/tree-sitter/tree-sitter-java) | 108 / 108 | 1385 | 194 |
-| [tree-sitter-c](https://github.com/tree-sitter/tree-sitter-c) | 85 / 85 | 2015 | 324 |
+| Grammar | Corpus tests passing | Parse states | Symbols | Lex states | External scanner |
+| --- | ---: | ---: | ---: | ---: | --- |
+| [agda](https://github.com/tree-sitter/tree-sitter-agda) | 75 / 75 | 12818 | 223 | 689 | AgdaScanner |
+| [bash](https://github.com/tree-sitter/tree-sitter-bash) | 100 / 100 | 7571 | 280 | 950 | BashScanner |
+| [c](https://github.com/tree-sitter/tree-sitter-c) | 85 / 85 | 2015 | 360 | 324 |  |
+| [c-sharp](https://github.com/tree-sitter/tree-sitter-c-sharp) | 154 / 155 | 7822 | 524 | 414 | CSharpScanner |
+| [cpp](https://github.com/tree-sitter/tree-sitter-cpp) | 197 / 197 | 11551 | 565 | 772 | CppScanner |
+| [css](https://github.com/tree-sitter/tree-sitter-css) | 40 / 40 | 442 | 142 | 437 | CssScanner |
+| [embedded-template](https://github.com/tree-sitter/tree-sitter-embedded-template) | 7 / 7 | 29 | 31 | 52 |  |
+| [go](https://github.com/tree-sitter/tree-sitter-go) | 67 / 67 | 1442 | 214 | 165 |  |
+| [haskell](https://github.com/tree-sitter/tree-sitter-haskell) | 725 / 725 | 12862 | 537 | 175 | HaskellScanner |
+| [html](https://github.com/tree-sitter/tree-sitter-html) | 20 / 20 | 94 | 41 | 77 | HtmlScanner |
+| [java](https://github.com/tree-sitter/tree-sitter-java) | 108 / 108 | 1385 | 320 | 194 |  |
+| [javascript](https://github.com/tree-sitter/tree-sitter-javascript) | 116 / 116 | 1870 | 261 | 279 | JavaScriptScanner |
+| [jsdoc](https://github.com/tree-sitter/tree-sitter-jsdoc) | 17 / 17 | 99 | 43 | 246 | JsDocScanner |
+| [json](https://github.com/tree-sitter/tree-sitter-json) | 6 / 6 | 32 | 25 | 44 |  |
+| [julia](https://github.com/tree-sitter/tree-sitter-julia) | 63 / 63 | 8267 | 243 | 373 | JuliaScanner |
+| [ocaml](https://github.com/tree-sitter/tree-sitter-ocaml) | 79 / 79 | 8273 | 440 | 356 | OCamlScanner |
+| [ocaml-type](https://github.com/tree-sitter/tree-sitter-ocaml) | 8 / 8 | 7196 | 439 | 358 | OCamlScanner |
+| [php](https://github.com/tree-sitter/tree-sitter-php) | 140 / 140 | 3371 | 431 | 292 | PhpScanner |
+| [python](https://github.com/tree-sitter/tree-sitter-python) | 117 / 117 | 2788 | 273 | 150 | PythonScanner |
+| [ql](https://github.com/tree-sitter/tree-sitter-ql) | 57 / 57 | 2019 | 188 | 57 |  |
+| [razor](https://github.com/tris203/tree-sitter-razor) | 71 / 71 | 18646 | 607 | 708 | CSharpScanner |
+| [ruby](https://github.com/tree-sitter/tree-sitter-ruby) | 290 / 290 | 5989 | 347 | 350 | RubyScanner |
+| [rust](https://github.com/tree-sitter/tree-sitter-rust) | 148 / 148 | 3825 | 351 | 196 | RustScanner |
+| [scala](https://github.com/tree-sitter/tree-sitter-scala) | 143 / 143 | 21252 | 353 | 191 | ScalaScanner |
+| [tsx](https://github.com/tree-sitter/tree-sitter-typescript) | 111 / 111 | 5994 | 393 | 294 | TypeScriptScanner |
+| [typescript](https://github.com/tree-sitter/tree-sitter-typescript) | 111 / 111 | 5878 | 376 | 219 | TypeScriptScanner |
+| [verilog](https://github.com/tree-sitter/tree-sitter-verilog) | 70 / 70 | 20534 | 1202 | 706 |  |
 
-Limitations: no included ranges, no changed ranges between trees, no queries, and no external scanners (grammars with
-`externals` compile, but their external tokens never match).
+The C# test that fails (`Switch statements`, `case int when i < 5:`) is parsed like tree-sitter 0.27.1 parses it: its
+generator shifts on a precedence tie with right-associative reductions where 0.26, which generated the native parser
+and the corpus, reduced.
+
+Limitations: no included ranges, no changed ranges between trees, no queries. The external scanners of other grammars
+have to be ported to C#.
 
 ## Build
 

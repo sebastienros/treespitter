@@ -238,13 +238,18 @@ public static class Corpus
         return sexp;
     }
 
-    /// <summary>Runs a test: parses its input and compares the S-expressions, ignoring the fields when the expected output has none.</summary>
+    /// <summary>
+    /// Runs a test: parses its input and compares the S-expressions, ignoring the fields when the expected output has none.
+    /// Like <c>tree-sitter test</c>, a test with the <c>:error</c> attribute passes when the tree has an error, whatever
+    /// its expected output.
+    /// </summary>
     public static CorpusTestResult Run(Parser parser, CorpusTest test)
     {
-        var tree = parser.Parse(test.Input);
+        using var tree = parser.Parse(test.Input);
         var hasFields = FieldRegex.IsMatch(test.Expected);
         var actual = NormalizeSExpression(tree.RootNode.ToSExpression(), stripFields: !hasFields);
         var expected = NormalizeSExpression(test.Expected, stripFields: false);
-        return new CorpusTestResult(test, actual == expected, actual, expected);
+        var passed = test.Attributes.Contains(":error") ? tree.HasError : actual == expected;
+        return new CorpusTestResult(test, passed, actual, expected);
     }
 }

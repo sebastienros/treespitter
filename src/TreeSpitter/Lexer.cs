@@ -46,6 +46,13 @@ public sealed class Lexer
     /// <summary>Gets whether the lexer is at the end of the input, like tree-sitter's <c>eof()</c>.</summary>
     public bool IsAtEnd => Position >= Length;
 
+    /// <summary>
+    /// Gets whether the lexer is at the start of an included range, for external scanners, like tree-sitter's
+    /// <c>is_at_included_range_start()</c>. The input is a single range, tree-sitter's default range from the byte 0:
+    /// this is whether the lexer is at the start of the input.
+    /// </summary>
+    public bool IsAtIncludedRangeStart => Position == 0;
+
     /// <summary>Whether an external scanner read the column, tree-sitter's <c>did_get_column</c>.</summary>
     internal bool DidGetColumn;
 
@@ -193,10 +200,12 @@ public interface ILexFunction
     bool LexKeyword(Lexer lexer, int state);
 
     /// <summary>
-    /// Looks up the bytes of a word token in the keywords of the language: returns the symbol of the keyword, -1 when
-    /// the token isn't a keyword, or -2 when <see cref="LexKeyword"/> must run (the keywords aren't a set of strings).
+    /// Looks up the bytes of a word token, from <paramref name="start"/> to <paramref name="end"/> in the input, in the
+    /// keywords of the language: returns the symbol of the keyword, -1 when the token isn't a keyword, or -2 when
+    /// <see cref="LexKeyword"/> must run (the keywords aren't a set of strings). The input is given whole, so that the
+    /// lookup can read the bytes after a short token at once.
     /// </summary>
-    int MatchKeyword(byte[] input, int start, int end);
+    int MatchKeyword(ReadOnlySpan<byte> input, int start, int end);
 }
 
 /// <summary>
@@ -224,7 +233,7 @@ public readonly struct TableLexFunction : ILexFunction
     public bool LexKeyword(Lexer lexer, int state) => Run(_keyword, lexer, state);
 
     /// <inheritdoc />
-    public int MatchKeyword(byte[] input, int start, int end) => _keywords is null ? KeywordTable.UseAutomaton : _keywords.Lookup(input, start, end);
+    public int MatchKeyword(ReadOnlySpan<byte> input, int start, int end) => _keywords is null ? KeywordTable.UseAutomaton : _keywords.Lookup(input, start, end);
 
     private static bool Run(LexAutomaton table, Lexer lexer, int state)
     {
@@ -288,7 +297,7 @@ public readonly struct TableLexFunction : ILexFunction
             else
             {
                 c = Lexer.Decode(input, position, length, out size);
-                next = c < 0 ? -1 : table.Transition(state, c);
+                next = table.Transition(state, c);
             }
 
             if (next < 0)

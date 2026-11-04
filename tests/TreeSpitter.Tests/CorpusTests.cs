@@ -29,6 +29,39 @@ public sealed class CorpusTests
         Assert.Equal(result.Expected, result.Actual);
     }
 
+    [Fact]
+    public void ATestWithTheErrorAttributePassesWhenTheTreeHasAnError()
+    {
+        // tree-sitter test doesn't compare the trees of these tests, whose expected outputs are often stale
+        var tests = TreeSpitter.Testing.Corpus.Parse("""
+            ==================
+            Stale
+            :error
+            ==================
+
+            [1,
+
+            ---
+
+            (document (array (number) (ERROR)))
+
+            ==================
+            Without error
+            :error
+            ==================
+
+            [1]
+
+            ---
+
+            (document (array (number)))
+
+            """);
+
+        Assert.True(TreeSpitter.Testing.Corpus.Run(Fixtures.Parser("json"), tests[0]).Passed);
+        Assert.False(TreeSpitter.Testing.Corpus.Run(Fixtures.Parser("json"), tests[1]).Passed);
+    }
+
     [Theory]
     [MemberData(nameof(Fixtures.Grammars), MemberType = typeof(Fixtures))]
     public void TheVirtualMachineMatchesTheKnownResults(string grammar) => MatchesTheKnownResults(grammar, Fixtures.Parser(grammar));
@@ -47,7 +80,7 @@ public sealed class CorpusTests
         var newFailures = new List<string>();
         var newPasses = new List<string>();
         var passed = 0;
-        var tests = TreeSpitter.Testing.Corpus.Load(Fixtures.Corpus(grammar)).Where(t => !t.Skip).ToList();
+        var tests = TreeSpitter.Testing.Corpus.Load(Fixtures.Corpus(grammar)).Where(t => !t.Skip && IsForGrammar(t, grammar)).ToList();
 
         foreach (var test in tests)
         {
@@ -77,4 +110,12 @@ public sealed class CorpusTests
         Assert.Empty(newFailures);
         Assert.Empty(newPasses);
     }
+
+    /// <summary>
+    /// Whether a test is for a grammar: tree-sitter runs the tests with a <c>:language(name)</c> attribute with the
+    /// parser of that grammar, they are left to the grammars sharing the corpus (like typescript and tsx).
+    /// </summary>
+    private static bool IsForGrammar(CorpusTest test, string grammar)
+        => test.Attributes.All(a => !a.StartsWith(":language(", StringComparison.Ordinal) ||
+            a == $":language({grammar})" || a == $":language({grammar.Replace('-', '_')})");
 }

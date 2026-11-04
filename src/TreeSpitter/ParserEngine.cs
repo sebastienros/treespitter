@@ -2,7 +2,7 @@ using System.Runtime.CompilerServices;
 
 namespace TreeSpitter;
 
-/// <summary>The parse loop, for a lex function. Implemented by <see cref="ParserEngine{TLexer}"/>.</summary>
+/// <summary>The parse loop, for a lex function. Implemented by <see cref="ParserEngine{TLexer, TTable}"/>.</summary>
 internal interface IParserEngine
 {
     SyntaxTree Parse(byte[] input, int length, SyntaxTree? oldTree);
@@ -13,8 +13,9 @@ internal interface IParserEngine
 /// language, the table-driven lexer of the VM or a generated lexer. An incremental parse reuses the unchanged subtrees
 /// of the old tree, and appends its nodes to the arena of the old tree.
 /// </summary>
-internal sealed class ParserEngine<TLexer> : IParserEngine
+internal sealed class ParserEngine<TLexer, TTable> : IParserEngine
     where TLexer : struct, ILexFunction
+    where TTable : struct, IParseTable
 {
     private const int MaxVersionCount = 6;
     private const int MaxVersionCountOverflow = 4;
@@ -24,6 +25,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
 
     private readonly Language _language;
     private readonly TLexer _lexFunction;
+    private readonly TTable _table;
     private readonly Lexer _lexer = new();
     private SubtreeArena _arena;
     private SubtreeArena? _spareArena;
@@ -44,17 +46,18 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
     private int _reusableCount;
     private int _reusableLastExternalToken;
 
-    // The external scanner, and its state after the last external token found
-    private readonly IExternalScanner? _scanner;
+    // The external scanner, created for each parse, and its state after the last external token found
+    private IExternalScanner? _scanner;
     private readonly byte[] _scannerState = new byte[ExternalScanner.StateCapacity];
     private int _scannerStateLength;
     private bool _scannerStateChanged;
     private int _cachedTokenLastExternalToken;
 
-    public ParserEngine(Language language, TLexer lexFunction)
+    public ParserEngine(Language language, TLexer lexFunction, TTable table)
     {
         _language = language;
         _lexFunction = lexFunction;
+        _table = table;
         _arena = new SubtreeArena(language, ReturnArena);
         _spareArena = _arena;
         _stack = new ParseStack(_arena);
@@ -154,6 +157,13 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
         _cachedTokenPosition = -1;
         _cachedTokenLastExternalToken = 0;
         ResetReusableNode(oldRoot);
+
+        // Like tree-sitter (ts_parser__external_scanner_create), each parse starts with a new scanner: the state that
+        // an empty serialized state doesn't reset doesn't leak from the previous parse
+        if (_scanner is not null)
+        {
+            _scanner = _language.ExternalScannerFactory!.Invoke();
+        }
 
         var lastPosition = 0;
         int versionCount;
@@ -331,7 +341,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                 continue;
             }
 
-            _language.TableEntry(state, _arena.LeafSymbol(result), out var entryCount, out var entryReusable);
+            _language.TableEntry(_table, state, _arena.LeafSymbol(result), out var entryCount, out var entryReusable);
             if (!CanReuseFirstLeaf(state, result, entryCount, entryReusable))
             {
                 ReusableAdvancePastLeaf();
@@ -491,7 +501,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                 if (keyword >= 0)
                 {
                     isKeyword = true;
-                    if (language.HasActions(parseState, (ushort)keyword) || language.IsReservedWord(parseState, (ushort)keyword))
+                    if (language.HasActions(_table, parseState, (ushort)keyword) || language.IsReservedWord(parseState, (ushort)keyword))
                     {
                         symbol = (ushort)keyword;
                     }
@@ -505,7 +515,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
             isKeyword = _lexFunction.LexKeyword(lexer, 0);
             LexerFinish();
             if (isKeyword && lexer.TokenEnd == tokenEnd &&
-                (language.HasActions(parseState, lexer.ResultSymbol) || language.IsReservedWord(parseState, lexer.ResultSymbol)))
+                (language.HasActions(_table, parseState, lexer.ResultSymbol) || language.IsReservedWord(parseState, lexer.ResultSymbol)))
             {
                 symbol = lexer.ResultSymbol;
             }
@@ -556,7 +566,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
             if (lexer.TokenEnd <= currentPosition && !_scannerStateChanged)
             {
                 var symbol = language.ExternalScannerSymbolMap[lexer.ResultSymbol];
-                var tokenIsExtra = language.NextState(parseState, symbol) == parseState;
+                var tokenIsExtra = language.NextState(_table, parseState, symbol) == parseState;
                 if (errorMode || !_stack.HasAdvancedSinceError(version) || tokenIsExtra)
                 {
                     found = false;
@@ -754,7 +764,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
             }
 
             var state = _stack.State(sliceVersion);
-            var nextState = _language.NextState(state, symbol);
+            var nextState = _language.NextState(_table, state, symbol);
             ref var parentData = ref _arena[parent];
             if (endOfNonTerminalExtra && nextState == state)
             {
@@ -811,7 +821,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
         ref var stackNode = ref _stack.Node(baseNode);
         var state = stackNode.State;
         var parent = _arena.NewNode(symbol, firstChild, childCount, productionId, stackNode.Position);
-        var nextState = _language.NextState(state, symbol);
+        var nextState = _language.NextState(_table, state, symbol);
         ref var parentData = ref _arena[parent];
         if (endOfNonTerminalExtra && nextState == state)
         {
@@ -1051,7 +1061,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                     }
                     else if (!_arena.IsExtra(child))
                     {
-                        state = _language.NextState(state, _arena[child].Symbol);
+                        state = _language.NextState(_table, state, _arena[child].Symbol);
                     }
 
                     _stack.Push(slice.Version, child, pending, state);
@@ -1198,7 +1208,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
     {
         var actions = _actions;
         var hasShiftAction = false;
-        var index = _language.TableEntry(state, symbol, out var count, out _);
+        var index = _language.TableEntry(_table, state, symbol, out var count, out _);
         for (var j = 0; j < count; j++)
         {
             var action = actions[index + j];
@@ -1238,10 +1248,14 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
         return hasShiftAction;
     }
 
+    private readonly List<StackSlice> _recoverSlices = [];
+
     private bool RecoverToState(int version, int depth, ushort goalState)
     {
-        var pop = _stack.PopCount(version, depth);
-        var slices = new List<StackSlice>(pop);
+        // A copy of the slices: popping the errors below reuses the list of the stack
+        var slices = _recoverSlices;
+        slices.Clear();
+        slices.AddRange(_stack.PopCount(version, depth));
         var previousVersion = VersionNone;
 
         for (var i = 0; i < slices.Count; i++)
@@ -1361,7 +1375,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                     break;
                 }
 
-                if (_language.HasActions(entry.State, _arena[lookahead].Symbol))
+                if (_language.HasActions(_table, entry.State, _arena[lookahead].Symbol))
                 {
                     if (RecoverToState(version, depth, entry.State))
                     {
@@ -1413,7 +1427,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
         }
 
         // An extra token is marked as extra, so it isn't counted in the error cost
-        var index = _language.TableEntry(1, _arena[lookahead].Symbol, out var n, out _);
+        var index = _language.TableEntry(_table, 1, _arena[lookahead].Symbol, out var n, out _);
         if (n > 0)
         {
             var last = _actions[index + n - 1];
@@ -1481,13 +1495,13 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                 var state = _stack.State(v);
                 for (var missingSymbol = 1; missingSymbol < _language.TokenCount; missingSymbol++)
                 {
-                    var stateAfterMissingSymbol = _language.NextState(state, (ushort)missingSymbol);
+                    var stateAfterMissingSymbol = _language.NextState(_table, state, (ushort)missingSymbol);
                     if (stateAfterMissingSymbol == 0 || stateAfterMissingSymbol == state)
                     {
                         continue;
                     }
 
-                    if (_language.HasReduceAction(stateAfterMissingSymbol, _arena.LeafSymbol(lookahead)))
+                    if (_language.HasReduceAction(_table, stateAfterMissingSymbol, _arena.LeafSymbol(lookahead)))
                     {
                         var versionWithMissingTree = _stack.CopyVersion(v);
                         var missingTree = _arena.NewMissingLeaf((ushort)missingSymbol, _arena.TotalBytes(lookahead) + _arena[lookahead].LookaheadBytes, Compatibility.TreeSitter026 ? (ushort)0 : state);
@@ -1543,7 +1557,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
             if (lookahead != 0)
             {
                 didReuse = true;
-                entryIndex = language.TableEntry(state, _arena.LeafSymbol(lookahead), out entryCount, out _);
+                entryIndex = language.TableEntry(_table, state, _arena.LeafSymbol(lookahead), out entryCount, out _);
             }
         }
 
@@ -1551,7 +1565,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
         if (lookahead == 0 && _cachedToken != 0 && _cachedTokenPosition == position &&
             (_scanner is null || _arena.ExternalStateEquals(_cachedTokenLastExternalToken, _stack.LastExternalToken(version))))
         {
-            entryIndex = language.TableEntry(state, _arena[_cachedToken].Symbol, out entryCount, out entryReusable);
+            entryIndex = language.TableEntry(_table, state, _arena[_cachedToken].Symbol, out entryCount, out entryReusable);
             if (CanReuseFirstLeaf(state, _cachedToken, entryCount, entryReusable))
             {
                 lookahead = _cachedToken;
@@ -1570,12 +1584,12 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                     _cachedToken = lookahead;
                     _cachedTokenPosition = position;
                     _cachedTokenLastExternalToken = _stack.LastExternalToken(version);
-                    entryIndex = language.TableEntry(state, _arena[lookahead].Symbol, out entryCount, out _);
+                    entryIndex = language.TableEntry(_table, state, _arena[lookahead].Symbol, out entryCount, out _);
                 }
                 else
                 {
                     // At the end of a non-terminal extra, the reduction is stored in the entry of the end symbol
-                    entryIndex = language.TableEntry(state, Language.EndSymbol, out entryCount, out _);
+                    entryIndex = language.TableEntry(_table, state, Language.EndSymbol, out entryCount, out _);
                 }
             }
 
@@ -1598,7 +1612,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                             if (_arena[lookahead].ChildCount > 0)
                             {
                                 lookahead = BreakdownLookahead(lookahead, state);
-                                nextState = language.NextState(state, _arena[lookahead].Symbol);
+                                nextState = language.NextState(_table, state, _arena[lookahead].Symbol);
                             }
 
                             Shift(version, nextState, lookahead, action.IsExtra);
@@ -1665,7 +1679,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                 }
                 else
                 {
-                    entryIndex = language.TableEntry(state, _arena.LeafSymbol(lookahead), out entryCount, out _);
+                    entryIndex = language.TableEntry(_table, state, _arena.LeafSymbol(lookahead), out entryCount, out _);
                 }
 
                 continue;
@@ -1683,7 +1697,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                 lookaheadData.Symbol != language.KeywordCaptureToken &&
                 !language.IsReservedWord(state, lookaheadData.Symbol))
             {
-                entryIndex = language.TableEntry(state, language.KeywordCaptureToken, out entryCount, out _);
+                entryIndex = language.TableEntry(_table, state, language.KeywordCaptureToken, out entryCount, out _);
                 if (entryCount > 0)
                 {
                     lookahead = _arena.WithSymbol(lookahead, language.KeywordCaptureToken);

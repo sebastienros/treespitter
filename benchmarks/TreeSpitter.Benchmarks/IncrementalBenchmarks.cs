@@ -22,6 +22,10 @@ public class IncrementalBenchmarks
     private bool _treeIsEdited;
     private bool _nativeTreeIsEdited;
 
+    // The edits with their points, like an editor gives them: the insertion of the character and its removal
+    private InputEdit _insertion;
+    private InputEdit _removal;
+
     /// <summary>The languages compared.</summary>
     public static IEnumerable<string> Languages => Grammars.Names;
 
@@ -57,6 +61,10 @@ public class IncrementalBenchmarks
             }
         }
 
+        var start = IncrementalCheck.PointAt(_original, _position);
+        var after = new Point(start.Row, start.Column + 1);
+        _insertion = new InputEdit(_position, _position, _position + 1, start, start, after);
+        _removal = new InputEdit(_position, _position + 1, _position, start, after, start);
         _tree = _parser.Parse(_original);
         _nativeTree = _native.ParseTree(_original, null);
 
@@ -95,8 +103,8 @@ public class IncrementalBenchmarks
     [Benchmark]
     public void NativeIncremental()
     {
-        var (oldInput, newInput) = _nativeTreeIsEdited ? (_edited, _original) : (_original, _edited);
-        _nativeTree.Edit(oldInput, newInput, _position, _position + (_nativeTreeIsEdited ? 1 : 0), _position + (_nativeTreeIsEdited ? 0 : 1));
+        var newInput = _nativeTreeIsEdited ? _original : _edited;
+        _nativeTree.Edit(_nativeTreeIsEdited ? _removal : _insertion);
         var tree = _native.ParseTree(newInput, _nativeTree);
         _nativeTree.Dispose();
         _nativeTree = tree;
@@ -115,7 +123,7 @@ public class IncrementalBenchmarks
     public void Incremental()
     {
         var newInput = _treeIsEdited ? _original : _edited;
-        _tree.Edit(new InputEdit(_position, _position + (_treeIsEdited ? 1 : 0), _position + (_treeIsEdited ? 0 : 1)));
+        _tree.Edit(_treeIsEdited ? _removal : _insertion);
         var tree = _parser.Parse(newInput, _tree);
         _tree.Dispose();
         _tree = tree;

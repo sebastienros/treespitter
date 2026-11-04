@@ -26,6 +26,17 @@ if (args.Length > 0 && args[0] == "profile")
     return;
 }
 
+if (args.Length > 0 && args[0] == "allocations")
+{
+    // allocations <languages>: the types of the objects allocated by the parses of the generated parsers
+    foreach (var language in args[1].Split(','))
+    {
+        AllocationProbe.Run(language, 100_000, 50);
+    }
+
+    return;
+}
+
 if (args.Length > 0 && args[0] == "quick-incremental")
 {
     // quick-incremental [languages]: times the incremental parses without BenchmarkDotNet
@@ -145,7 +156,10 @@ if (args.Length > 0 && args[0] == "quick")
             var native = Measure(benchmark.Native);
             var vm = Measure(benchmark.Vm);
             var generated = Measure(benchmark.Generated);
-            Console.WriteLine($"{language,-5} {size,7}: native {native,8:F3} ms   vm {vm,8:F3} ms ({vm / native,4:F2})   generated {generated,8:F3} ms ({generated / native,4:F2})");
+            var allocated = GC.GetAllocatedBytesForCurrentThread();
+            benchmark.Generated();
+            allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
+            Console.WriteLine($"{language,-5} {benchmark.InputBytes / 1000.0,6:F1} KB: native {native,8:F3} ms   vm {vm,8:F3} ms ({vm / native,4:F2})   generated {generated,8:F3} ms ({generated / native,4:F2}), {allocated / 1024.0,8:F1} KB allocated");
             benchmark.Cleanup();
         }
     }

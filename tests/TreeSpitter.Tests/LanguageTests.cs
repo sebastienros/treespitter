@@ -12,6 +12,11 @@ public sealed class LanguageTests
     {
         var language = Fixtures.Language(grammar);
         var loaded = Language.Load(language.Save());
+        if (language.ExternalScannerFactory is { } scanner)
+        {
+            // The scanner is code: it isn't saved with the tables
+            loaded.WithExternalScanner(scanner);
+        }
 
         Assert.Equal(language.StateCount, loaded.StateCount);
         Assert.Equal(language.SymbolCount, loaded.SymbolCount);
@@ -59,14 +64,40 @@ public sealed class LanguageTests
     }
 
     [Fact]
+    public void InvalidUtf8MatchesTheNegatedCharacterClassesLikeInTreeSitter()
+    {
+        // tree-sitter's lexers render the transitions on sets with the last code point as negated conditions, which the
+        // lookahead of invalid UTF-8 (-1) satisfies, but not the large sets of identifiers: the trees of the native parser
+        byte[] input = [.. "int a"u8, 0xE5, .. "b; // c"u8, 0xE5, .. "d\nchar *s = \"e"u8, 0xE5, .. "f\";\n"u8];
+        const string expected = "(translation_unit (declaration type: (primitive_type) declarator: (identifier) (ERROR (UNEXPECTED INVALID) (identifier))) (comment) " +
+            "(declaration type: (primitive_type) declarator: (init_declarator declarator: (pointer_declarator declarator: (identifier)) value: (string_literal (string_content)))))";
+
+        Assert.Equal(expected, new Parser(Fixtures.GeneratedLanguage("c")).Parse(input).ToSExpression());
+        Assert.Equal(expected, new Parser(Fixtures.Language("c")).Parse(input).ToSExpression());
+    }
+
+    [Fact]
+    public void ALanguageLoadsFromASpanLikeFromAnArray()
+    {
+        var saved = Fixtures.Language("json").Save();
+        var fromSpan = Language.Load(new ReadOnlySpan<byte>(saved));
+        var fromArray = Language.Load(saved);
+
+        Assert.Equal(fromArray.Save(), fromSpan.Save());
+        Assert.Equal("(document (array (number) (true)))", new Parser(fromSpan).Parse("[1, true]").ToSExpression());
+        Assert.ThrowsAny<IOException>(() => Language.Load(ReadOnlySpan<byte>.Empty));
+    }
+
+    [Fact]
     public void TheGeneratorEmitsAClassWithTheLanguage()
     {
         var source = CSharpGenerator.Generate(Fixtures.Language("json"), new CSharpGeneratorOptions { Namespace = "Demo", ClassName = "JsonParser" });
 
         Assert.Contains("namespace Demo", source);
         Assert.Contains("public static partial class JsonParser", source);
-        Assert.Contains("private static bool LexMain(global::TreeSpitter.Lexer lexer, int state)", source);
+        Assert.Contains("public bool Lex(global::TreeSpitter.Lexer lexer, int state) => _tables.Lex(lexer, state);", source);
         Assert.Contains("global::TreeSpitter.ILexFunction", source);
+        Assert.Contains("private static global::System.ReadOnlySpan<byte> Data => new byte[]", source);
     }
 
     [Fact]

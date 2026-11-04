@@ -149,6 +149,23 @@ internal sealed unsafe class NativeUtf8Parser : IDisposable
             TreeEdit(Handle, &edit);
         }
 
+        /// <summary>Edits the tree with the points of the edit, which an editor knows: nothing is computed.</summary>
+        public void Edit(InputEdit edit)
+        {
+            var native = new TSInputEdit
+            {
+                StartByte = (uint)edit.StartByte,
+                OldEndByte = (uint)edit.OldEndByte,
+                NewEndByte = (uint)edit.NewEndByte,
+                StartPoint = ToNative(edit.StartPoint!.Value),
+                OldEndPoint = ToNative(edit.OldEndPoint!.Value),
+                NewEndPoint = ToNative(edit.NewEndPoint!.Value),
+            };
+            TreeEdit(Handle, &native);
+
+            static TSPoint ToNative(Point point) => new() { Row = (uint)point.Row, Column = (uint)point.Column };
+        }
+
         public string ToSExpression()
         {
             var text = NodeString(TreeRootNode(Handle));

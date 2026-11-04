@@ -16,8 +16,67 @@ internal static class Grammars
         "go" => Go(size),
         "java" => Java(size),
         "c" => C(size),
-        _ => throw new ArgumentException($"No input for the grammar '{name}'.", nameof(name)),
+        _ => FromCorpus(name, size),
     };
+
+    /// <summary>
+    /// An input of about <paramref name="size"/> chars made of the inputs of the corpus tests of a grammar: the ones
+    /// which parse without errors, alone and one after the other, repeated while the input has no errors. A grammar
+    /// whose documents can't follow each other (a JSDoc comment) gets a smaller input.
+    /// </summary>
+    public static string FromCorpus(string name, int size)
+    {
+        var parser = new Parser(GeneratedLanguage(name));
+        var separator = Separators.GetValueOrDefault(name, "\n");
+        var tests = Testing.Corpus.Load(System.IO.Path.Combine(Root(), "grammars", name, "corpus"))
+            .Where(t => !t.Skip && t.Attributes.All(a => !a.StartsWith(":language(", StringComparison.Ordinal) || a == $":language({name})" || a == $":language({name.Replace('-', '_')})") && !t.Expected.Contains("ERROR") && !t.Expected.Contains("MISSING"))
+
+            // In Ruby, the text after __END__ is data: the rest of the input wouldn't be parsed
+            .Where(t => !t.Input.Contains("\n__END__"))
+            .ToList();
+        var block = new StringBuilder();
+        foreach (var test in tests)
+        {
+            var length = block.Length;
+            block.Append(test.Input).Append(separator);
+            if (HasError(parser, block.ToString()))
+            {
+                block.Length = length;
+            }
+        }
+
+        if (block.Length == 0)
+        {
+            throw new ArgumentException($"No corpus input of the grammar '{name}' parses without errors.", nameof(name));
+        }
+
+        var text = block.ToString();
+        if (HasError(parser, text + text))
+        {
+            return text;
+        }
+
+        var builder = new StringBuilder();
+        while (builder.Length < size)
+        {
+            builder.Append(text);
+        }
+
+        return builder.ToString();
+    }
+
+    /// <summary>The separators of the corpus inputs, for the grammars where a new line isn't enough.</summary>
+    private static readonly Dictionary<string, string> Separators = new()
+    {
+        // The tests start with <?php: the PHP code is closed after each one
+        ["php"] = "\n?>\n",
+    };
+
+    private static bool HasError(Parser parser, string input)
+    {
+        using var tree = parser.Parse(input);
+        return tree.HasError;
+    }
 
     private static readonly Dictionary<string, Language> Languages = [];
 
@@ -104,7 +163,9 @@ internal static class Grammars
         {
             if (File.Exists(System.IO.Path.Combine(directory, "TreeSpitter.slnx")))
             {
-                return System.IO.Path.Combine(directory, "grammars", name, "grammar.js");
+                // The grammars which require files of sibling directories keep the layout of their repository
+                var path = System.IO.Path.Combine(directory, "grammars", name, "grammar.js");
+                return File.Exists(path) ? path : System.IO.Path.Combine(directory, "grammars", name, name, "grammar.js");
             }
         }
 

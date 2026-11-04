@@ -61,24 +61,31 @@ tree-sitter) and turned into NFAs, never forwarded to `System.Text.RegularExpres
 
 `Language` holds the generated tables, the equivalent of the `TSLanguage` of a `parser.c`:
 
-- the parse table, dense: `ParseTable[state * SymbolCount + symbol]` is the index of an action list for a terminal and the
-  goto state for a non-terminal (tree-sitter splits large and small states, a dense table is faster to look up);
+- the parse table: the value of a state and a symbol is the index of an action list for a terminal and the goto state for
+  a non-terminal. It is dense (`ParseTable[state * SymbolCount + symbol]`, faster to look up than tree-sitter's large and
+  small states) up to 2^21 entries, and compressed above (C++, C#, Razor, TypeScript, TSX, Verilog...): the rows are cut
+  in chunks of 16 symbols (more when the 16-bit chunk indices don't fit) and the identical chunks are stored once, which
+  takes Verilog (20534 states, 1223 symbols) from 50 MB to 7.5 MB. The parse loop is generic over the kind of table
+  (`IParseTable`), so the dense tables don't pay for the compressed ones;
 - the action lists, `ParseActionEntry` values packed in 64 bits (header: count and reusable; actions: shift, reduce with
-  symbol, child count, production id and dynamic precedence, accept, recover);
+  symbol, child count, production id and dynamic precedence on 16 bits like tree-sitter, accept, recover);
 - the lex modes of the states (lex state, external lex state, reserved word set), the alias sequences and field maps of
   the production ids, the symbol names and metadata, the reserved words, the keyword capture token;
 - the lexer automata (`LexAutomaton`), main and keywords: per state the accepted token, the transition at the end of the
   input and the transitions as sorted code point ranges, plus a dense table of the ASCII transitions.
 
-`Language.Save()` writes them in a versioned, deflated binary format and `Language.Load()` reads them back.
+`Language.Save()` writes them in a versioned, deflated binary format (the parse tables as byte planes, the low bytes then the
+high bytes, which deflate better) and `Language.Load()` reads them back. The external scanner is code: a loaded language
+gets it with `WithExternalScanner`.
 
 ## The parser runtime
 
 A port of `lib/src/parser.c`, `stack.c` and `subtree.c`:
 
-- `ParserEngine<TLexer>`: the parse loop (`ts_parser_parse`), `Lex`, `Advance`, `Shift`, `Reduce`, `Accept`, the error
-  recovery (`HandleError`, `Recover`, `RecoverToState`, `DoAllPotentialReductions`, missing tokens) and `CondenseStack`.
-  It is generic over the lex function (a struct), so the JIT specializes it for the table lexer or a generated lexer.
+- `ParserEngine<TLexer, TTable>`: the parse loop (`ts_parser_parse`), `Lex`, `Advance`, `Shift`, `Reduce`, `Accept`, the
+  error recovery (`HandleError`, `Recover`, `RecoverToState`, `DoAllPotentialReductions`, missing tokens) and
+  `CondenseStack`. It is generic over the lex function and the parse table (structs), so the JIT specializes it for the
+  table lexer or a generated lexer, and for a dense or a compressed table.
 - `ParseStack`: the graph-structured stack of the GLR algorithm, with versions, links, merges and `stack__iter`.
 - `SubtreeArena`: the nodes. tree-sitter allocates reference-counted subtrees; TreeSpitter stores the nodes as structs in
   an arena (`SubtreeData[]`) and the children as runs of indices in one `int[]`. Nothing is freed during a parse, and
@@ -90,6 +97,29 @@ A port of `lib/src/parser.c`, `stack.c` and `subtree.c`:
   UTF-16, which doubles the costs and can change the recovery of large errors).
 - `SyntaxTree` and `SyntaxNode` expose the tree-sitter node model; `SExpressionWriter` ports `ts_subtree__write_to_string`
   without recursion.
+
+### External scanners
+
+The external scanners of the grammars are C code (`src/scanner.c`): `TreeSpitter.Languages` has C# ports of them
+(`Scanners/`), which keep the structure, the names and the comments of the C code so that the two can be diffed, and the
+C semantics that change the tokens (signed `char`, wrapping unsigned arithmetic, truncations, `memcpy` layouts).
+
+- `IExternalScanner` is `scan`, `serialize` and `deserialize`, and `Lexer` the `TSLexer` of the scanners (`Lookahead`,
+  `Advance`, `MarkEnd`, `GetColumn`, `IsAtEnd`, `IsAtIncludedRangeStart`, `ResultSymbol`). A parser creates a new scanner
+  for each parse, like `ts_parser_parse`, since the state that an empty `deserialize` doesn't reset must not leak to the
+  next parse.
+- The serialized states are the bytes of the C serializers: the runtime compares them to merge stack versions, to cache
+  tokens and to reuse nodes, so a different layout changes the trees. They are stored in the arena with the external
+  leaves that change them, and the stack heads and the nodes keep their last external token like tree-sitter.
+- The tokens which read their column are marked, and an edit invalidates them like `ts_subtree_edit` when it has the
+  points of tree-sitter's `TSInputEdit` (`InputEdit` takes them optionally): until the end of their line, or after it
+  when the edit shifted the columns. Without points, an edit invalidates all the nodes after it which read their column.
+- `WideChar` ports the `iswspace`, `iswalpha`... of tree-sitter's Wasm standard library (musl's tables), the portable
+  behavior of the scanners. Native parsers call the C library of their platform, whose wide character functions depend
+  on the locale: in the C locale of the TreeSitter.DotNet binding on Linux, they only match ASCII, so the trees of the
+  Ruby scanner differ from the native ones on non-ASCII heredoc words and interpolations.
+- The lexers match invalid UTF-8 like tree-sitter's generated lexers: the lookahead is -1, which the negated character
+  classes of `render.rs` (`lookahead != '"' && ...`) accept, so the invalid bytes are part of strings and comments.
 
 ### Incremental parsing
 
@@ -120,8 +150,9 @@ A port of `lib/src/parser.c`, `stack.c` and `subtree.c`:
 
 The benchmarks check the incremental parses against the native ones (`incremental-check`): the random edits of
 tree-sitter's corpus tests (`get_random_edit`) are applied to both trees, and the trees of the incremental parses, then
-of the parses after undoing the edits, are compared. They are identical for the corpus tests of the four grammars, 10
-trials each, including the cases where the native incremental parse differs from a fresh parse.
+of the parses after undoing the edits, are compared, with the points of the edits like tree-sitter's tests. They are
+identical for the corpus tests of the 27 grammars, including the cases where the native incremental parse differs from
+a fresh parse.
 
 ### Performance
 
@@ -144,19 +175,38 @@ The hot paths don't allocate. Measured optimizations, in the order of their gain
    integer comparison. Keywords that are prefixes of other keywords still run the automaton. The gain is 1 to 3%: the
    automaton already stops after a few bytes for most identifiers.
 
+The 46 methods marked `[MethodImpl(MethodImplOptions.AggressiveInlining)]` (the table lookups, the accessors of the
+arena and the stack, the UTF-8 decoding, the lexer transitions) are worth it: without the attribute, the parses of the
+generated parsers are 1 to 3% slower on 8 grammars, and the incremental parses up to 6.5% (Go and Java). The JIT inlines
+the smallest ones anyway; none was measured to be harmful, each one's effect being below the noise of the benchmarks.
+
+The grammars with many ambiguities and the error recovery have their own costs:
+
+- When two versions of the stack meet, `select_tree` compares their trees (`ts_subtree_compare`) down to the leaves while
+  they are equal. The versions share their prefixes, so the comparison skips the pairs of identical subtrees: C++ parses
+  22% faster.
+- The error recovery records a summary of the stack of each paused version and pops slices: the lists are pooled (they
+  allocated 1.3 MB per parse of a PHP input with errors). The rows spanned by skipped trees (their error cost) come from
+  an index of the line starts which is built lazily, up to the positions asked, and reused by the parses of the arena:
+  it was allocated for the whole input at each parse with an error (89 KB per incremental parse of a Go file of 100 KB).
+
 ## Source generation
 
 `CodeGen/CSharpGenerator` writes a partial class with the serialized tables (a `byte[]` in the assembly), a `Language`
-property and a lex function struct with the keyword switches. The lexer automata are compiled to C# (a `switch` on the state with a `switch` on the
-code point, `goto` transitions, like tree-sitter's `ts_lex`) when the method is small enough for the JIT to optimize it:
-past about 2000 basic blocks the JIT compiles it with MinOpts, so large automata (like C's main lexer) use the table
-lexer. `TreeSpitter.Generators` is a Roslyn incremental generator for the classes marked `[GeneratedLanguage("…/grammar.json")]`:
-it compiles the source of the library (without Jint) and reads the grammars from the `AdditionalFiles`.
-`TreeSpitter.Languages` uses it for JSON, Go, Java and C.
+property and a lex function struct with the keyword switches. The lexer automata are run by the table lexer, like the
+ones of the VM. They used to be compiled to C# (a `switch` on the state with a `switch` on the code point and `goto`
+transitions, like tree-sitter's `ts_lex`), which was not faster than the table lexer (its ASCII transitions are one
+array lookup, and its self-loops are vectorized), within 3% either way on the 13 grammars whose lexers the JIT
+optimized, and 22 to 30% slower for JavaScript, TypeScript and Rust, whose lexer methods were too large to be optimized
+(the JIT compiles the methods of more than about 2000 basic blocks with MinOpts). `TreeSpitter.Generators` is a Roslyn
+incremental generator for the classes marked `[GeneratedLanguage("…/grammar.json")]`: it compiles the source of the
+library (without Jint) and reads the grammars from the `AdditionalFiles`. `TreeSpitter.Languages` uses it for the 27
+grammars; a development build can generate only some of them (`TreeSpitterGrammars=json,go dotnet build`).
 
 ## Limitations
 
 - No included ranges, and no changed ranges (`ts_tree_get_changed_ranges`) between the trees of an incremental parse.
 - The `eof()` rule of tree-sitter 0.27 isn't supported: the generator reports it.
-- External scanners aren't supported: grammars with `externals` compile, but the external tokens never match.
+- The external scanners of other grammars than the ones of `TreeSpitter.Languages` have to be ported to C#
+  (`IExternalScanner`).
 - The tree API is smaller than tree-sitter's (no queries, no tree cursor).

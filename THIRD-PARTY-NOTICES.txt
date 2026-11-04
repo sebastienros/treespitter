@@ -104,6 +104,165 @@ Used by: grammars/verilog (test fixture and TreeSpitter.Languages, see its LICEN
 
 ---------------------------------------------------------
 
+tree-sitter-html - MIT
+https://github.com/tree-sitter/tree-sitter-html @ 73a3947324f6efddf9e17c0ea58d454843590cc0
+Copyright (c) 2014 Max Brunsfeld
+Used by: grammars/html (test fixture and TreeSpitter.Languages, see its LICENSE), and
+src/TreeSpitter.Languages/Scanners/HtmlScanner.cs (port of its src/scanner.c and src/tag.h)
+
+---------------------------------------------------------
+
+tree-sitter-php - MIT
+https://github.com/tree-sitter/tree-sitter-php @ 7d07b41ce2d442ca9a90ed85d0075eccc17ae315
+Copyright (c) 2017 Josh Vera, GitHub
+Copyright (c) 2019 Max Brunsfeld, Amaan Qureshi, Christian Frøystad, Caleb White
+Used by: grammars/php (test fixture and TreeSpitter.Languages, see its LICENSE), and
+src/TreeSpitter.Languages/Scanners/PhpScanner.cs (port of its common/scanner.h)
+
+---------------------------------------------------------
+
+tree-sitter-javascript - MIT
+https://github.com/tree-sitter/tree-sitter-javascript @ 58404d8cf191d69f2674a8fd507bd5776f46cb11
+Copyright (c) 2014 Max Brunsfeld
+Used by: grammars/javascript (test fixture and TreeSpitter.Languages, see its LICENSE), and
+src/TreeSpitter.Languages/Scanners/JavaScriptScanner.cs (port of its src/scanner.c)
+
+---------------------------------------------------------
+
+tree-sitter-jsdoc - MIT
+https://github.com/tree-sitter/tree-sitter-jsdoc @ 658d18dcdddb75c760363faa4963427a7c6b52db
+Copyright (c) 2018 Max Brunsfeld <maxbrunsfeld@gmail.com>
+Used by: grammars/jsdoc (test fixture and TreeSpitter.Languages, see its LICENSE), and
+src/TreeSpitter.Languages/Scanners/JsDocScanner.cs (port of its src/scanner.c)
+
+---------------------------------------------------------
+
+tree-sitter-typescript - MIT
+https://github.com/tree-sitter/tree-sitter-typescript @ 75b3874edb2dc714fb1fd77a32013d0f8699989f
+Copyright (c) 2017 Max Brunsfeld
+Used by: grammars/typescript and grammars/tsx (test fixture and TreeSpitter.Languages, see its LICENSE), and
+src/TreeSpitter.Languages/Scanners/TypeScriptScanner.cs (port of its common/scanner.h)
+
+---------------------------------------------------------
+
+tree-sitter-python - MIT
+https://github.com/tree-sitter/tree-sitter-python @ 26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64
+Copyright (c) 2016 Max Brunsfeld
+Used by: grammars/python (test fixture and TreeSpitter.Languages, see its LICENSE), and
+src/TreeSpitter.Languages/Scanners/PythonScanner.cs (port of its src/scanner.c)
+
+---------------------------------------------------------
+
+tree-sitter-rust - MIT
+https://github.com/tree-sitter/tree-sitter-rust @ 261b20226c04ef601adbdf185a800512a5f66291
+Copyright (c) 2017 Maxim Sokolov
+Used by: grammars/rust (test fixture and TreeSpitter.Languages, see its LICENSE), and
+src/TreeSpitter.Languages/Scanners/RustScanner.cs (port of its src/scanner.c)
+
+---------------------------------------------------------
+
+tree-sitter-cpp - MIT
+https://github.com/tree-sitter/tree-sitter-cpp @ 12bd6f7e96080d2e70ec51d4068f2f66120dde35
+Copyright (c) 2014 Max Brunsfeld
+Used by: grammars/cpp (test fixture and TreeSpitter.Languages, see its LICENSE), and
+src/TreeSpitter.Languages/Scanners/CppScanner.cs (port of its src/scanner.c)
+
+---------------------------------------------------------
+
+tree-sitter-javascript (npm dependency of tree-sitter-typescript) - MIT
+https://github.com/tree-sitter/tree-sitter-javascript @ v0.23.1 (3a837b6f3658ca3618f2022f8707e29739c91364)
+Copyright (c) 2014 Max Brunsfeld
+Used by: grammars/typescript/node_modules and grammars/tsx/node_modules (grammar.js, test fixture, see its LICENSE)
+
+---------------------------------------------------------
+
+tree-sitter-c (npm dependency of tree-sitter-cpp) - MIT
+https://github.com/tree-sitter/tree-sitter-c @ v0.23.6 (ec69f91b23dd8630d68710b911d77127146ff7ef)
+Copyright (c) 2014 Max Brunsfeld
+Used by: grammars/cpp/node_modules (grammar.js, test fixture, see its LICENSE)
+
+---------------------------------------------------------
+
+tree-sitter-c-sharp - MIT
+https://github.com/tree-sitter/tree-sitter-c-sharp @ f05a2ca99d329de2e6c32f26a21c6169b2bfcbb7
+Copyright (c) 2014-2023 Max Brunsfeld, Damien Guard, Amaan Qureshi, and contributors.
+Used by: grammars/c-sharp (test fixture and TreeSpitter.Languages, see its LICENSE), and
+src/TreeSpitter.Languages/Scanners/CSharpScanner.cs (port of its src/scanner.c)
+
+---------------------------------------------------------
+
+tree-sitter-razor - MIT
+https://github.com/tris203/tree-sitter-razor @ fe46ce5ea7d844e53d59bc96f2175d33691c61c5
+Copyright (c) 2023 Tristan Knight
+Used by: grammars/razor (test fixture and TreeSpitter.Languages, see its LICENSE), and
+its src/scanner.c, identical to the one of tree-sitter-c-sharp but the names, ported by CSharpScanner.cs
+
+---------------------------------------------------------
+
+tree-sitter-agda - MIT
+https://github.com/tree-sitter/tree-sitter-agda @ e8d47a6987effe34d5595baf321d82d3519a8527
+Copyright (c) 2018 LUA Ting-Gan
+Used by: grammars/agda (test fixture and TreeSpitter.Languages, see its LICENSE), and
+src/TreeSpitter.Languages/Scanners/AgdaScanner.cs (port of its src/scanner.c)
+
+---------------------------------------------------------
+
+tree-sitter-haskell - MIT
+https://github.com/tree-sitter/tree-sitter-haskell @ 0975ef72fc3c47b530309ca93937d7d143523628
+Copyright (c) 2014 Max Brunsfeld
+Used by: grammars/haskell (test fixture and TreeSpitter.Languages, see its LICENSE), and
+src/TreeSpitter.Languages/Scanners/HaskellScanner.cs and HaskellScanner.Unicode.cs (port of its src/scanner.c and
+src/unicode.h)
+
+---------------------------------------------------------
+
+tree-sitter-ruby - MIT
+https://github.com/tree-sitter/tree-sitter-ruby @ 89bd7a8e5450cb6a942418a619d30469f259e5d6
+Copyright (c) 2016 Rob Rix
+Used by: grammars/ruby (test fixture and TreeSpitter.Languages, see its LICENSE), and
+src/TreeSpitter.Languages/Scanners/RubyScanner.cs (port of its src/scanner.c)
+
+---------------------------------------------------------
+
+tree-sitter-bash - MIT
+https://github.com/tree-sitter/tree-sitter-bash @ a06c2e4415e9bc0346c6b86d401879ffb44058f7
+Copyright (c) 2017 Max Brunsfeld
+Used by: grammars/bash (test fixture and TreeSpitter.Languages, see its LICENSE), and
+src/TreeSpitter.Languages/Scanners/BashScanner.cs (port of its src/scanner.c)
+
+---------------------------------------------------------
+
+tree-sitter-ocaml - MIT
+https://github.com/tree-sitter/tree-sitter-ocaml @ 3ef7c00b29e41e3a0c1d18e82ea37c64d72b93fc
+Copyright (c) 2020 Max Brunsfeld and Pieter Goetschalckx
+Used by: grammars/ocaml and grammars/ocaml-type (test fixture and TreeSpitter.Languages, see their LICENSE), and
+src/TreeSpitter.Languages/Scanners/OCamlScanner.cs (port of its common/scanner.h)
+
+---------------------------------------------------------
+
+tree-sitter-julia - MIT
+https://github.com/tree-sitter/tree-sitter-julia @ e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3
+Copyright (c) 2018 Max Brunsfeld, GitHub
+Used by: grammars/julia (test fixture and TreeSpitter.Languages, see its LICENSE), and
+src/TreeSpitter.Languages/Scanners/JuliaScanner.cs (port of its src/scanner.c)
+
+---------------------------------------------------------
+
+tree-sitter-scala - MIT
+https://github.com/tree-sitter/tree-sitter-scala @ 97aead18d97708190a51d4f551ea9b05b60641c9
+Copyright (c) 2018 Max Brunsfeld and GitHub
+Used by: grammars/scala (test fixture and TreeSpitter.Languages, see its LICENSE), and
+src/TreeSpitter.Languages/Scanners/ScalaScanner.cs (port of its src/scanner.c)
+
+---------------------------------------------------------
+
+tree-sitter-c-sharp (npm dependency of tree-sitter-razor) - MIT
+https://github.com/tree-sitter/tree-sitter-c-sharp @ v0.23.1 (362a8a41b265056592a0c3771664a21d23a71392)
+Copyright (c) 2014-2023 Max Brunsfeld, Damien Guard, Amaan Qureshi, and contributors.
+Used by: grammars/razor/node_modules (grammar.js, test fixture, see its LICENSE)
+
+---------------------------------------------------------
+
 musl libc - MIT
 https://musl.libc.org, as vendored by tree-sitter in lib/src/wasm-stdlib/libc (v0.27.1)
 Used by: src/TreeSpitter/WideChar.cs (the tables and the logic of the ctype functions: iswalpha, iswpunct, iswspace,

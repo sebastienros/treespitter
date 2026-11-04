@@ -15,9 +15,9 @@ internal enum ParseActionType : byte
 /// A parse action or the header of an action list, packed in 64 bits like tree-sitter's <c>TSParseActionEntry</c>.
 /// </summary>
 /// <remarks>
-/// Header: bits 0-15 the count, bit 16 reusable. Action: bits 0-1 the type, bit 2 extra, bit 3 repetition, bits 16-31 the
-/// state (shift) or the symbol (reduce), bits 32-39 the child count, bits 40-55 the production id, bits 56-63 the dynamic
-/// precedence (signed).
+/// Header: bits 0-15 the count, bit 16 reusable. Action: bits 0-1 the type, bit 2 extra, bit 3 repetition, bits 8-15 the
+/// child count, bits 16-31 the state (shift) or the symbol (reduce), bits 32-47 the production id, bits 48-63 the dynamic
+/// precedence (signed, an <c>int16_t</c> like in tree-sitter).
 /// </remarks>
 internal readonly struct ParseActionEntry(ulong value)
 {
@@ -63,19 +63,19 @@ internal readonly struct ParseActionEntry(ulong value)
     public int ChildCount
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => (int)((Value >> 32) & 0xFF);
+        get => (int)((Value >> 8) & 0xFF);
     }
 
     public ushort ProductionId
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => (ushort)(Value >> 40);
+        get => (ushort)(Value >> 32);
     }
 
     public int DynamicPrecedence
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => (sbyte)(Value >> 56);
+        get => (short)(Value >> 48);
     }
 
     public static ulong Header(int count, bool reusable) => (ulong)(uint)count | (reusable ? 0x10000UL : 0UL);
@@ -84,7 +84,7 @@ internal readonly struct ParseActionEntry(ulong value)
         (ulong)ParseActionType.Shift | (extra ? 4UL : 0) | (repetition ? 8UL : 0) | ((ulong)(ushort)state << 16);
 
     public static ulong Reduce(int symbol, int childCount, int dynamicPrecedence, int productionId) =>
-        (ulong)ParseActionType.Reduce | ((ulong)(ushort)symbol << 16) | ((ulong)(byte)childCount << 32) | ((ulong)(ushort)productionId << 40) | ((ulong)unchecked((byte)dynamicPrecedence) << 56);
+        (ulong)ParseActionType.Reduce | ((ulong)(byte)childCount << 8) | ((ulong)(ushort)symbol << 16) | ((ulong)(ushort)productionId << 32) | ((ulong)unchecked((ushort)dynamicPrecedence) << 48);
 
     public static ulong Accept() => (ulong)ParseActionType.Accept;
 
@@ -167,8 +167,31 @@ public sealed partial class Language
 
     internal string?[] FieldNames { get; set; } = [null];
 
-    /// <summary>[state * SymbolCount + symbol]: the index of the action list of a terminal, the goto state of a non-terminal.</summary>
+    /// <summary>The dense parse table, <c>ParseTable[state * SymbolCount + symbol]</c>, empty when the table is compressed.</summary>
     internal ushort[] ParseTable { get; set; } = [];
+
+    /// <summary>Gets the dense parse table, when the language has one.</summary>
+    internal DenseParseTable DenseTable => new(ParseTable, SymbolCount);
+
+    /// <summary>Gets the compressed parse table, when the language has one.</summary>
+    internal ChunkedParseTable ChunkedTable => new(ParseTableChunkIndex, ParseTableChunks, ParseTableChunkShift, ParseTableChunksPerRow);
+
+    /// <summary>
+    /// The parse table of the largest grammars, compressed in chunks of <c>1 &lt;&lt; ParseTableChunkShift</c> consecutive symbols: the value
+    /// of a state and a symbol (the index of an action list for a terminal, the next state for a non-terminal) is
+    /// <c>ParseTableChunks[(chunk &lt;&lt; shift) | (symbol &amp; mask)]</c>, where the chunk is
+    /// <c>ParseTableChunkIndex[state * ParseTableChunksPerRow + (symbol &gt;&gt; shift)]</c>.
+    /// </summary>
+    internal ushort[] ParseTableChunkIndex { get; set; } = [];
+
+    /// <summary>The unique chunks of the parse table, chunk 0 is empty.</summary>
+    internal ushort[] ParseTableChunks { get; set; } = [];
+
+    /// <summary>The log2 of the number of symbols of the chunks of the parse table.</summary>
+    internal int ParseTableChunkShift { get; set; }
+
+    /// <summary>The number of chunks of a state in <see cref="ParseTableChunkIndex"/>.</summary>
+    internal int ParseTableChunksPerRow { get; set; }
 
     internal ParseActionEntry[] ParseActions { get; set; } = [];
 
@@ -306,11 +329,17 @@ public sealed partial class Language
 
     /// <summary>The index of the action list for a terminal in a state, tree-sitter's <c>ts_language_lookup</c>.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal int Lookup(int state, int symbol) => ParseTable[state * SymbolCount + symbol];
+    internal int Lookup(int state, int symbol) => ParseTable.Length > 0 ? DenseTable.Lookup(state, symbol) : ChunkedTable.Lookup(state, symbol);
 
     /// <summary>The actions of a terminal in a state: the index of the first action and the count.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal int TableEntry(int state, ushort symbol, out int count, out bool reusable)
+    internal int TableEntry(int state, ushort symbol, out int count, out bool reusable) =>
+        ParseTable.Length > 0 ? TableEntry(DenseTable, state, symbol, out count, out reusable) : TableEntry(ChunkedTable, state, symbol, out count, out reusable);
+
+    /// <summary>The actions of a terminal in a state, with a parse table for which the call is specialized.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal int TableEntry<TTable>(TTable table, int state, ushort symbol, out int count, out bool reusable)
+        where TTable : struct, IParseTable
     {
         if (symbol >= ErrorRepeatSymbol)
         {
@@ -319,7 +348,7 @@ public sealed partial class Language
             return 0;
         }
 
-        var index = ParseTable[state * SymbolCount + symbol];
+        var index = table.Lookup(state, symbol);
         var header = ParseActions[index];
         count = header.Count;
         reusable = header.Reusable;
@@ -332,15 +361,29 @@ public sealed partial class Language
         return count > 0;
     }
 
-    internal bool HasReduceAction(int state, ushort symbol)
+    internal bool HasActions<TTable>(TTable table, int state, ushort symbol)
+        where TTable : struct, IParseTable
     {
-        var index = TableEntry(state, symbol, out var count, out _);
+        TableEntry(table, state, symbol, out var count, out _);
+        return count > 0;
+    }
+
+    internal bool HasReduceAction<TTable>(TTable table, int state, ushort symbol)
+        where TTable : struct, IParseTable
+    {
+        var index = TableEntry(table, state, symbol, out var count, out _);
         return count > 0 && ParseActions[index].Type == ParseActionType.Reduce;
     }
 
     /// <summary>The state after a symbol, tree-sitter's <c>ts_language_next_state</c>.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal ushort NextState(int state, ushort symbol)
+    internal ushort NextState(int state, ushort symbol) =>
+        ParseTable.Length > 0 ? NextState(DenseTable, state, symbol) : NextState(ChunkedTable, state, symbol);
+
+    /// <summary>The state after a symbol, with a parse table for which the call is specialized.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal ushort NextState<TTable>(TTable table, int state, ushort symbol)
+        where TTable : struct, IParseTable
     {
         if (symbol >= ErrorRepeatSymbol)
         {
@@ -349,7 +392,7 @@ public sealed partial class Language
 
         if (symbol < TokenCount)
         {
-            var index = ParseTable[state * SymbolCount + symbol];
+            var index = table.Lookup(state, symbol);
             var count = ParseActions[index].Count;
             if (count > 0)
             {
@@ -363,7 +406,7 @@ public sealed partial class Language
             return 0;
         }
 
-        return ParseTable[state * SymbolCount + symbol];
+        return (ushort)table.Lookup(state, symbol);
     }
 
     internal bool IsReservedWord(int state, ushort symbol)

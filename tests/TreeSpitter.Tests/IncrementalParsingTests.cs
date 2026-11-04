@@ -9,6 +9,16 @@ namespace TreeSpitter.Tests;
 /// </summary>
 public sealed class IncrementalParsingTests
 {
+    /// <summary>
+    /// The tests skipped by tree-sitter's corpus tests (<c>corpus_test.rs</c>), whose trees change with the edits: the
+    /// heredocs of tree-sitter-bash, whose scanner keeps the heredocs after the ones of its state, so the incremental
+    /// parses depend on the nodes they reuse (the native parser gives these trees too).
+    /// </summary>
+    private static readonly Dictionary<string, string[]> SkippedTests = new()
+    {
+        ["bash"] = ["Nested Heredocs", "Quoted Heredocs", "Heredocs with weird characters"],
+    };
+
     private const int TrialCount = 6;
     private const int MaxEditCount = 3;
 
@@ -26,8 +36,17 @@ public sealed class IncrementalParsingTests
     public void RandomEditsAndTheirUndoGiveTheTreesOfAFreshParse(string grammar)
     {
         var parser = Fixtures.Parser(grammar);
-        var tests = Testing.Corpus.Load(Fixtures.Corpus(grammar)).Where(t => !t.Skip).ToList();
+        var skipped = SkippedTests.TryGetValue(grammar, out var names) ? names : [];
+        var tests = Testing.Corpus.Load(Fixtures.Corpus(grammar)).Where(t => !t.Skip && !skipped.Contains(t.Name)).ToList();
+
+        // The trials whose undone tree isn't the original one with the native parser too, because of its external
+        // scanner (file: test name (trial n)), like the known failures of the corpus tests
+        var knownFailuresPath = Path.Combine(Fixtures.GrammarDirectory(grammar), "known-incremental-failures.txt");
+        var knownFailures = File.Exists(knownFailuresPath)
+            ? File.ReadAllLines(knownFailuresPath).Where(l => l.Length > 0 && !l.StartsWith('#')).ToHashSet()
+            : [];
         var failures = new List<string>();
+        var newPasses = new HashSet<string>(knownFailures);
         var sameAsFresh = 0;
         var editedParses = 0;
         for (var testIndex = 0; testIndex < tests.Count; testIndex++)
@@ -69,9 +88,10 @@ public sealed class IncrementalParsingTests
                 using var undone = parser.Parse(input, edited);
                 CheckConsistentSizes(undone, input);
                 var actual = undone.ToSExpression();
-                if (actual != expected)
+                var key = $"{Path.GetFileNameWithoutExtension(tests[testIndex].File)}: {tests[testIndex].Name} (trial {trial})";
+                if (actual != expected && !newPasses.Remove(key))
                 {
-                    failures.Add($"{tests[testIndex].Name} (trial {trial})\n  expected: {expected}\n  actual:   {actual}");
+                    failures.Add($"{key}\n  expected: {expected}\n  actual:   {actual}");
                 }
             }
         }
@@ -82,7 +102,13 @@ public sealed class IncrementalParsingTests
             _output.WriteLine(failure);
         }
 
+        foreach (var key in newPasses)
+        {
+            _output.WriteLine("now passing, remove from known-incremental-failures.txt: " + key);
+        }
+
         Assert.Empty(failures);
+        Assert.Empty(newPasses);
     }
 
     [Theory]
@@ -356,11 +382,30 @@ public sealed class IncrementalParsingTests
     private static Edit Invert(byte[] input, Edit edit) =>
         new(edit.Position, edit.Inserted.Length, input.AsSpan(edit.Position, edit.DeletedLength).ToArray());
 
-    /// <summary>Edits the tree and returns the new input.</summary>
+    /// <summary>Edits the tree, with the points of the edit like tree-sitter's tests, and returns the new input.</summary>
     private static byte[] Apply(SyntaxTree tree, byte[] input, Edit edit)
     {
-        tree.Edit(new InputEdit(edit.Position, edit.Position + edit.DeletedLength, edit.Position + edit.Inserted.Length));
-        return [.. input.AsSpan(0, edit.Position), .. edit.Inserted, .. input.AsSpan(edit.Position + edit.DeletedLength)];
+        byte[] newInput = [.. input.AsSpan(0, edit.Position), .. edit.Inserted, .. input.AsSpan(edit.Position + edit.DeletedLength)];
+        tree.Edit(new InputEdit(
+            edit.Position, edit.Position + edit.DeletedLength, edit.Position + edit.Inserted.Length,
+            PointAt(input, edit.Position), PointAt(input, edit.Position + edit.DeletedLength), PointAt(newInput, edit.Position + edit.Inserted.Length)));
+        return newInput;
+    }
+
+    private static Point PointAt(byte[] input, int position)
+    {
+        var row = 0;
+        var lineStart = 0;
+        for (var i = 0; i < position; i++)
+        {
+            if (input[i] == '\n')
+            {
+                row++;
+                lineStart = i + 1;
+            }
+        }
+
+        return new Point(row, position - lineStart);
     }
 
     /// <summary>tree-sitter's <c>check_consistent_sizes</c>.</summary>

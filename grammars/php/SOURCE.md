@@ -1,0 +1,3 @@
+Vendored from https://github.com/tree-sitter/tree-sitter-php at commit 7d07b41ce2d442ca9a90ed85d0075eccc17ae315 (MIT License, see LICENSE), the version of the native parser of TreeSitter.DotNet 1.3.0. The native parser is the `php` grammar of the repository (PHP with the text around `<?php` tags), not `php_only`.
+
+Files: php/grammar.js and common/define-grammar.js at their paths in the repository (php/grammar.js requires `../common/define-grammar.js`), php/src/grammar.json (as grammar.json) and test/corpus/*.txt (as corpus/), except php_only.txt, whose tests are for the php_only grammar (`:language(php_only)`). The external scanner, php/src/scanner.c with common/scanner.h, is ported to C# in src/TreeSpitter.Languages/Scanners/PhpScanner.cs.

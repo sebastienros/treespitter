@@ -69,6 +69,9 @@ public class NativeComparisonBenchmarks
         }
     }
 
+    /// <summary>Gets the size of the input in bytes, smaller than <see cref="Size"/> for the grammars whose corpus can't be repeated.</summary>
+    public int InputBytes => _utf8.Length;
+
     /// <summary>Releases the native parser.</summary>
     [GlobalCleanup]
     public void Cleanup()

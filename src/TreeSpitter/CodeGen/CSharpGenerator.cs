@@ -25,8 +25,8 @@ public sealed class CSharpGeneratorOptions
 
 /// <summary>
 /// Generates the C# source of a precompiled parser: the tables of a <see cref="Language"/> are embedded in their binary
-/// format, and the lexer automata are compiled to code, like the <c>ts_lex</c> function of tree-sitter's
-/// <c>parser.c</c>. The generated class exposes the language and creates parsers.
+/// format, and the keywords are matched by code (switches on their length and on chunks of their bytes). The generated
+/// class exposes the language and creates parsers.
 /// </summary>
 public static class CSharpGenerator
 {
@@ -68,7 +68,6 @@ public static class CSharpGenerator
         writer.Line();
         writer.Line("private static class Holder");
         writer.Open();
-        // The data is declared first: static fields are initialized in the order of the declarations
         WriteData(writer, language.Save());
         writer.Line();
         writer.Line("public static readonly global::TreeSpitter.Language Instance = Create();");
@@ -83,9 +82,8 @@ public static class CSharpGenerator
         writer.Close();
         writer.Line();
 
-        // The automata too complex for the JIT to optimize a method run with the table lexer
-        var compileMain = LexerWriter.CanCompile(language.MainLexTable);
-        var compileKeywords = LexerWriter.CanCompile(language.KeywordLexTable);
+        // The lexer automata are run by the table lexer: compiled to C#, they weren't faster when the JIT optimized them,
+        // and the large ones were 20 to 30% slower, compiled without optimizations. The keywords are matched by code.
         writer.Line("private readonly struct LexFunction : global::TreeSpitter.ILexFunction");
         writer.Open();
         writer.Line("private readonly global::TreeSpitter.TableLexFunction _tables;");
@@ -95,18 +93,14 @@ public static class CSharpGenerator
         writer.Line("_tables = tables;");
         writer.Close();
         writer.Line();
-        writer.Line(compileMain
-            ? "public bool Lex(global::TreeSpitter.Lexer lexer, int state) => LexMain(lexer, state);"
-            : "public bool Lex(global::TreeSpitter.Lexer lexer, int state) => _tables.Lex(lexer, state);");
+        writer.Line("public bool Lex(global::TreeSpitter.Lexer lexer, int state) => _tables.Lex(lexer, state);");
         writer.Line();
-        writer.Line(compileKeywords
-            ? "public bool LexKeyword(global::TreeSpitter.Lexer lexer, int state) => LexKeywords(lexer, state);"
-            : "public bool LexKeyword(global::TreeSpitter.Lexer lexer, int state) => _tables.LexKeyword(lexer, state);");
+        writer.Line("public bool LexKeyword(global::TreeSpitter.Lexer lexer, int state) => _tables.LexKeyword(lexer, state);");
         writer.Line();
         var keywords = language.Keywords;
         writer.Line(keywords is not null
-            ? "public int MatchKeyword(byte[] input, int start, int end) => MatchKeywords(new global::System.ReadOnlySpan<byte>(input, start, end - start));"
-            : "public int MatchKeyword(byte[] input, int start, int end) => _tables.MatchKeyword(input, start, end);");
+            ? "public int MatchKeyword(global::System.ReadOnlySpan<byte> input, int start, int end) => MatchKeywords(input.Slice(start, end - start));"
+            : "public int MatchKeyword(global::System.ReadOnlySpan<byte> input, int start, int end) => _tables.MatchKeyword(input, start, end);");
         writer.Close();
 
         if (keywords is not null)
@@ -130,48 +124,6 @@ public static class CSharpGenerator
             writer.Close();
         }
 
-        var tables = new StringBuilder();
-        if (compileMain)
-        {
-            writer.Line();
-            new LexerWriter(writer, tables, "Main").Write("LexMain", language.MainLexTable);
-        }
-
-        if (compileKeywords)
-        {
-            writer.Line();
-            new LexerWriter(writer, tables, "Keyword").Write("LexKeywords", language.KeywordLexTable);
-        }
-        if (tables.Length > 0)
-        {
-            writer.Line();
-            writer.Raw(tables.ToString());
-            writer.Line();
-            writer.Line("private static int FindRange(int[] ranges, int c)");
-            writer.Open();
-            writer.Line("var low = 0;");
-            writer.Line("var high = ranges.Length / 3 - 1;");
-            writer.Line("while (low <= high)");
-            writer.Open();
-            writer.Line("var mid = (low + high) >> 1;");
-            writer.Line("if (c < ranges[mid * 3])");
-            writer.Open();
-            writer.Line("high = mid - 1;");
-            writer.Close();
-            writer.Line("else if (c > ranges[mid * 3 + 1])");
-            writer.Open();
-            writer.Line("low = mid + 1;");
-            writer.Close();
-            writer.Line("else");
-            writer.Open();
-            writer.Line("return ranges[mid * 3 + 2];");
-            writer.Close();
-            writer.Close();
-            writer.Line();
-            writer.Line("return -1;");
-            writer.Close();
-        }
-
         writer.Close();
         if (hasNamespace)
         {
@@ -181,9 +133,13 @@ public static class CSharpGenerator
         return builder.ToString();
     }
 
+    /// <summary>
+    /// Writes the serialized tables as a span of a constant array, which the compiler stores in the data of the assembly:
+    /// <c>Language.Load</c> reads them there, without allocating or keeping a copy.
+    /// </summary>
     private static void WriteData(CodeWriter writer, byte[] data)
     {
-        writer.Line("private static readonly byte[] Data =");
+        writer.Line("private static global::System.ReadOnlySpan<byte> Data => new byte[]");
         writer.Line("{");
         var line = new StringBuilder();
         for (var i = 0; i < data.Length; i++)
@@ -215,8 +171,6 @@ public static class CSharpGenerator
             builder.Append(text).Append('\n');
         }
 
-        public void Raw(string text) => builder.Append(text);
-
         public void Open()
         {
             Line("{");
@@ -228,266 +182,5 @@ public static class CSharpGenerator
             _indent--;
             Line("}" + suffix);
         }
-
-        public int Indent => _indent;
-    }
-
-    /// <summary>
-    /// Writes a lex automaton as a method with a switch on the states, whose cases switch on the code point. The
-    /// accepted tokens and the transitions at the end of the input are looked up in arrays, which keeps the method small
-    /// enough for the JIT to optimize it.
-    /// </summary>
-    private sealed class LexerWriter(CodeWriter writer, StringBuilder tables, string prefix)
-    {
-        private const int MaxInlineRanges = 6;
-
-        /// <summary>The JIT doesn't optimize methods with more than about 2000 basic blocks.</summary>
-        private const int MaxBasicBlocks = 1500;
-
-        /// <summary>Whether the method of an automaton is small enough to be optimized by the JIT.</summary>
-        public static bool CanCompile(LexAutomaton automaton)
-        {
-            var blocks = 0;
-            for (var state = 0; state < automaton.StateCount; state++)
-            {
-                var targets = new HashSet<int>();
-                for (var i = automaton.TransitionStart[state]; i < automaton.TransitionStart[state + 1]; i++)
-                {
-                    targets.Add(automaton.RangeTarget[i]);
-                }
-
-                blocks += targets.Count == 0 ? 0 : targets.Count + 3;
-            }
-
-            return blocks <= MaxBasicBlocks;
-        }
-
-        public void Write(string name, LexAutomaton automaton)
-        {
-            writer.Line($"private static bool {name}(global::TreeSpitter.Lexer lexer, int state)");
-            writer.Open();
-            if (automaton.StateCount == 0)
-            {
-                writer.Line("return false;");
-                writer.Close();
-                return;
-            }
-
-            AppendTable($"{prefix}Accept", automaton.Accept);
-            AppendTable($"{prefix}Eof", automaton.EofTarget);
-
-            writer.Line($"var accept = {prefix}Accept;");
-            writer.Line($"var eof = {prefix}Eof;");
-            writer.Line("var input = lexer.Input;");
-            writer.Line("var length = lexer.Length;");
-            writer.Line("var position = lexer.Position;");
-            writer.Line("var tokenStart = lexer.TokenStart;");
-            writer.Line("var tokenEnd = lexer.TokenEnd;");
-            writer.Line("var symbol = lexer.ResultSymbol;");
-            writer.Line("var result = false;");
-            writer.Line("int c;");
-            writer.Line("int size;");
-            writer.Line("while (true)");
-            writer.Open();
-            writer.Line("var accepted = accept[state];");
-            writer.Line("if (accepted >= 0)");
-            writer.Open();
-            writer.Line("result = true;");
-            writer.Line("symbol = (ushort)accepted;");
-            writer.Line("tokenEnd = position;");
-            writer.Close();
-            writer.Line("if (position >= length)");
-            writer.Open();
-            writer.Line("var target = eof[state];");
-            writer.Line("if (target < 0 || target == state)");
-            writer.Open();
-            writer.Line("goto done;");
-            writer.Close();
-            writer.Line("state = target;");
-            writer.Line("continue;");
-            writer.Close();
-            writer.Line("c = input[position];");
-            writer.Line("size = 1;");
-            writer.Line("if (c >= 0x80)");
-            writer.Open();
-            writer.Line("c = global::TreeSpitter.Lexer.Decode(input, position, length, out size);");
-            writer.Line("if (c < 0)");
-            writer.Open();
-            writer.Line("goto done;");
-            writer.Close();
-            writer.Close();
-            writer.Line("switch (state)");
-            writer.Open();
-            for (var state = 0; state < automaton.StateCount; state++)
-            {
-                WriteState(automaton, state);
-            }
-
-            writer.Line("default:");
-            writer.Line("    goto done;");
-            writer.Close();
-            writer.Line("advance:");
-            writer.Line("position += size;");
-            writer.Line("continue;");
-            writer.Line("skip:");
-            writer.Line("position += size;");
-            writer.Line("tokenStart = position;");
-            writer.Close();
-            writer.Line("done:");
-            writer.Line("lexer.Position = position;");
-            writer.Line("lexer.TokenStart = tokenStart;");
-            writer.Line("lexer.TokenEnd = tokenEnd;");
-            writer.Line("lexer.ResultSymbol = symbol;");
-            writer.Line("return result;");
-            writer.Close();
-        }
-
-        private void AppendTable(string name, int[] values)
-        {
-            tables.Append(new string(' ', writer.Indent * 4)).Append($"private static readonly int[] {name} = {{ ");
-            foreach (var value in values)
-            {
-                tables.Append(value.ToString(CultureInfo.InvariantCulture)).Append(", ");
-            }
-
-            tables.Append("};\n");
-        }
-
-        private void WriteState(LexAutomaton automaton, int state)
-        {
-            var start = automaton.TransitionStart[state];
-            var end = automaton.TransitionStart[state + 1];
-            if (start == end)
-            {
-                // No transition: the default case
-                return;
-            }
-
-            // The transitions, grouped by target; the non-ASCII ranges of the large sets are looked up in a table
-            var groups = new List<(int Target, List<(int Start, int End)> Ranges)>();
-            var tableRanges = new List<(int Start, int End, int Target)>();
-            var nonAsciiCount = 0;
-            for (var i = start; i < end; i++)
-            {
-                if (automaton.RangeEnd[i] >= 128)
-                {
-                    nonAsciiCount++;
-                }
-            }
-
-            for (var i = start; i < end; i++)
-            {
-                var low = automaton.RangeStart[i];
-                var high = automaton.RangeEnd[i];
-                var target = automaton.RangeTarget[i];
-                if (nonAsciiCount > MaxInlineRanges && high >= 128)
-                {
-                    if (low < 128)
-                    {
-                        AddRange(groups, target, low, 127);
-                    }
-
-                    tableRanges.Add((Math.Max(low, 128), high, target));
-                    continue;
-                }
-
-                AddRange(groups, target, low, high);
-            }
-
-            writer.Line($"case {state}:");
-            writer.Open();
-            if (automaton.SelfLoops[state] is { } loop)
-            {
-                var name = $"{prefix}Loop{state}";
-                var bytes = new List<int>();
-                for (var c = 0; c < 128; c++)
-                {
-                    var target = automaton.Ascii[state * 128 + c] - 1;
-                    if (target >= 0 && (target & ~LexAutomaton.SkipFlag) == state)
-                    {
-                        bytes.Add(c);
-                    }
-                }
-
-                tables.Append(new string(' ', writer.Indent * 4))
-                    .Append($"private static readonly global::TreeSpitter.ByteRun {name} = new global::TreeSpitter.ByteRun(new byte[] {{ {string.Join(", ", bytes)} }}, {(loop.Skip ? "true" : "false")});\n");
-                writer.Line($"if ({name}.Contains(c))");
-                writer.Open();
-                writer.Line($"position = {name}.SkipRun(input, position + 1, length);");
-                if (loop.Skip)
-                {
-                    writer.Line("tokenStart = position;");
-                }
-
-                writer.Line("continue;");
-                writer.Close();
-            }
-
-            writer.Line("switch (c)");
-            writer.Open();
-            foreach (var (target, ranges) in groups)
-            {
-                foreach (var (low, high) in ranges)
-                {
-                    writer.Line(low == high ? $"case {low}:{Comment(low)}" : $"case >= {low} and <= {high}:{Comment(low, high)}");
-                }
-
-                writer.Line("    " + Transition(target));
-            }
-
-            if (tableRanges.Count > 0)
-            {
-                var table = $"{prefix}Ranges{state}";
-                tables.Append(new string(' ', writer.Indent * 4)).Append($"private static readonly int[] {table} = {{ ");
-                foreach (var (low, high, target) in tableRanges)
-                {
-                    tables.Append(low).Append(", ").Append(high).Append(", ").Append(target).Append(", ");
-                }
-
-                tables.Append("};\n");
-                writer.Line("case >= 128:");
-                writer.Open();
-                writer.Line($"var next = FindRange({table}, c);");
-                writer.Line("if (next < 0)");
-                writer.Open();
-                writer.Line("goto done;");
-                writer.Close();
-                writer.Line($"if ((next & {LexAutomaton.SkipFlag}) != 0)");
-                writer.Open();
-                writer.Line($"state = next & ~{LexAutomaton.SkipFlag};");
-                writer.Line("goto skip;");
-                writer.Close();
-                writer.Line("state = next;");
-                writer.Line("goto advance;");
-                writer.Close();
-            }
-
-            writer.Line("default:");
-            writer.Line("    goto done;");
-            writer.Close();
-            writer.Close();
-        }
-
-        private static void AddRange(List<(int Target, List<(int Start, int End)> Ranges)> groups, int target, int low, int high)
-        {
-            var group = groups.FindIndex(g => g.Target == target);
-            if (group < 0)
-            {
-                groups.Add((target, []));
-                group = groups.Count - 1;
-            }
-
-            groups[group].Ranges.Add((low, high));
-        }
-
-        private static string Transition(int target) =>
-            (target & LexAutomaton.SkipFlag) != 0
-                ? $"state = {target & ~LexAutomaton.SkipFlag}; goto skip;"
-                : $"state = {target}; goto advance;";
-
-        private static string Comment(int c) => c is >= 0x21 and < 0x7f && c != '\\' ? " // " + (char)c : "";
-
-        private static string Comment(int low, int high) =>
-            low is >= 0x21 and < 0x7f && high is >= 0x21 and < 0x7f && low != '\\' && high != '\\' ? $" // {(char)low}-{(char)high}" : "";
     }
 }

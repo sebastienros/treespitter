@@ -250,7 +250,8 @@ internal sealed class LanguageBuilder(PreparedGrammar grammar, Tables tables)
     {
         var symbolCount = _parseTable.Symbols.Count;
         var states = _parseTable.States;
-        var table = new ushort[states.Count * symbolCount];
+        // The entries of the rows of the states, by symbol (the last one wins, like the designated initializers of C)
+        var rows = new SortedDictionary<int, ushort>[states.Count];
         var actions = new List<ulong>();
         var listIds = new Dictionary<ParseTableEntry, int>();
 
@@ -302,9 +303,10 @@ internal sealed class LanguageBuilder(PreparedGrammar grammar, Tables tables)
         for (var i = 0; i < states.Count; i++)
         {
             var state = states[i];
+            var row = rows[i] = [];
             foreach (var (symbol, action) in state.NonTerminalEntries.Entries)
             {
-                table[i * symbolCount + _symbolIds[symbol]] = (ushort)(action.IsShiftExtra ? i : action.State);
+                row[_symbolIds[symbol]] = (ushort)(action.IsShiftExtra ? i : action.State);
             }
 
             groups.Clear();
@@ -312,7 +314,7 @@ internal sealed class LanguageBuilder(PreparedGrammar grammar, Tables tables)
             foreach (var (symbol, entry) in state.TerminalEntries.Entries.OrderBy(e => e.Key == Symbol.EndOfNonTerminalExtra ? -1 : _symbolIds[e.Key]))
             {
                 var id = ListId(entry);
-                table[i * symbolCount + _symbolIds[symbol]] = (ushort)id;
+                row[_symbolIds[symbol]] = (ushort)id;
                 if (!groups.TryGetValue(id, out var group))
                 {
                     groups[id] = group = [];
@@ -346,8 +348,95 @@ internal sealed class LanguageBuilder(PreparedGrammar grammar, Tables tables)
             throw new GrammarException($"Parse table action count {actions.Count} exceeds maximum value of {ushort.MaxValue}");
         }
 
-        language.ParseTable = table;
+        if ((long)states.Count * symbolCount <= MaxDenseTableSize)
+        {
+            var table = new ushort[states.Count * symbolCount];
+            for (var i = 0; i < rows.Length; i++)
+            {
+                foreach (var (symbol, value) in rows[i])
+                {
+                    table[i * symbolCount + symbol] = value;
+                }
+            }
+
+            language.ParseTable = table;
+        }
+        else
+        {
+            BuildChunkedTable(language, rows, symbolCount);
+        }
+
         language.ParseActions = actions.Select(a => new ParseActionEntry(a)).ToArray();
+    }
+
+    /// <summary>The largest dense parse table, in entries (4 MB): the larger ones are compressed.</summary>
+    private const int MaxDenseTableSize = 1 << 21;
+
+    /// <summary>
+    /// Compresses the parse table: the rows are cut in chunks of consecutive symbols, and the identical chunks (most are
+    /// empty) are stored once. A lookup reads the index of the chunk, then the entry. The chunks are as small as the
+    /// 16-bit indices allow: 16 symbols, or more for the largest grammars.
+    /// </summary>
+    private static void BuildChunkedTable(Language language, SortedDictionary<int, ushort>[] rows, int symbolCount)
+    {
+        var row = new char[symbolCount];
+        for (var shift = 4; ; shift++)
+        {
+            var size = 1 << shift;
+            var chunksPerRow = (symbolCount + size - 1) >> shift;
+            var index = new ushort[rows.Length * chunksPerRow];
+            var ids = new Dictionary<string, int>(StringComparer.Ordinal) { [new string('\0', size)] = 0 };
+            var chunks = new List<string> { new('\0', size) };
+            var fits = true;
+            for (var state = 0; state < rows.Length && fits; state++)
+            {
+                Array.Clear(row, 0, row.Length);
+                foreach (var (symbol, value) in rows[state])
+                {
+                    row[symbol] = (char)value;
+                }
+
+                for (var c = 0; c < chunksPerRow; c++)
+                {
+                    var start = c << shift;
+                    var key = new string(row, start, Math.Min(size, symbolCount - start)).PadRight(size, '\0');
+                    if (!ids.TryGetValue(key, out var id))
+                    {
+                        id = chunks.Count;
+                        if (id > ushort.MaxValue)
+                        {
+                            fits = false;
+                            break;
+                        }
+
+                        ids[key] = id;
+                        chunks.Add(key);
+                    }
+
+                    index[state * chunksPerRow + c] = (ushort)id;
+                }
+            }
+
+            if (!fits)
+            {
+                continue;
+            }
+
+            language.ParseTableChunkShift = shift;
+            language.ParseTableChunksPerRow = chunksPerRow;
+            language.ParseTableChunkIndex = index;
+            var values = new ushort[chunks.Count * size];
+            for (var i = 0; i < chunks.Count; i++)
+            {
+                for (var j = 0; j < size; j++)
+                {
+                    values[i * size + j] = chunks[i][j];
+                }
+            }
+
+            language.ParseTableChunks = values;
+            return;
+        }
     }
 
     private void BuildLexModes(Language language)
@@ -522,6 +611,11 @@ internal sealed class LanguageBuilder(PreparedGrammar grammar, Tables tables)
                 }
             }
 
+            if (DecodeErrorTransition(state, tables.LargeCharacterSets) is { } decodeError)
+            {
+                ranges.Add((-1, -1, decodeError.State | (decodeError.InMainToken ? 0 : LexAutomaton.SkipFlag)));
+            }
+
             ranges.Sort((a, b) => a.Start.CompareTo(b.Start));
             foreach (var (start, end, target) in ranges)
             {
@@ -556,6 +650,120 @@ internal sealed class LanguageBuilder(PreparedGrammar grammar, Tables tables)
 
         return new LexAutomaton(accept, eof, transitionStart, [.. rangeStart], [.. rangeEnd], [.. rangeTarget]);
     }
+
+    /// <summary>
+    /// The transition on an invalid UTF-8 sequence, where the lookahead of tree-sitter's lexers is -1: the first
+    /// transition whose condition, as rendered by render.rs (<c>add_lex_state</c>), is true for -1. The transitions of
+    /// a lex state are disjoint, but render.rs simplifies their conditions with the characters of the previous
+    /// transitions and renders the sets which contain the last code point as negated conditions
+    /// (<c>lookahead != '"' &amp;&amp; ...</c>), which -1 satisfies: the native lexers include invalid UTF-8 in the
+    /// tokens of negated character classes, like the contents of strings and comments, but not in the large character
+    /// sets looked up with <c>set_contains</c>, like the letters of identifiers. They are stored as a range [-1, -1].
+    /// </summary>
+    private static AdvanceAction? DecodeErrorTransition(LexState state, List<CharacterSet> largeCharacterSets)
+    {
+        // The leading single-character transitions rendered as a map (ADVANCE_MAP) never match -1
+        var leadingCount = 0;
+        var leadingRangeCount = 0;
+        foreach (var (chars, action) in state.AdvanceActions)
+        {
+            // Ranges are half-open here, inclusive in tree-sitter
+            if (!action.InMainToken || !chars.Ranges.All(r => r.End - 1 <= r.Start + 1 && r.End - 1 <= ushort.MaxValue))
+            {
+                break;
+            }
+
+            leadingCount++;
+            leadingRangeCount += chars.RangeCount;
+        }
+
+        var ruledOutChars = new CharacterSet();
+        if (leadingRangeCount >= 8)
+        {
+            for (var i = 0; i < leadingCount; i++)
+            {
+                ruledOutChars.Add(state.AdvanceActions[i].Chars);
+            }
+        }
+        else
+        {
+            leadingCount = 0;
+        }
+
+        for (var i = leadingCount; i < state.AdvanceActions.Count; i++)
+        {
+            var (chars, action) = state.AdvanceActions[i];
+            var simplifiedChars = chars.SimplifyIgnoring(ruledOutChars);
+
+            // The best matching large character set, with the additional checks
+            (int Index, CharacterSet Additions, CharacterSet Removals)? bestLargeCharSet = null;
+            if (simplifiedChars.RangeCount >= LexTableBuilder.LargeCharacterRangeCount)
+            {
+                for (var ix = 0; ix < largeCharacterSets.Count; ix++)
+                {
+                    var charsCopy = simplifiedChars.Clone();
+                    var largeSet = largeCharacterSets[ix].Clone();
+                    var intersection = charsCopy.RemoveIntersection(largeSet);
+                    if (!intersection.IsEmpty)
+                    {
+                        var additions = charsCopy.SimplifyIgnoring(ruledOutChars);
+                        var removals = largeSet.SimplifyIgnoring(ruledOutChars);
+                        var totalRangeCount = additions.RangeCount + removals.RangeCount;
+                        if (totalRangeCount >= simplifiedChars.RangeCount)
+                        {
+                            continue;
+                        }
+
+                        if (bestLargeCharSet is { } best && best.Additions.RangeCount + best.Removals.RangeCount < totalRangeCount)
+                        {
+                            continue;
+                        }
+
+                        bestLargeCharSet = (ix, additions, removals);
+                    }
+                }
+            }
+
+            ruledOutChars.Add(chars);
+
+            var assertedChars = simplifiedChars;
+            var negatedChars = new CharacterSet();
+            if (bestLargeCharSet is { } large)
+            {
+                assertedChars = large.Additions;
+                negatedChars = large.Removals;
+            }
+
+            // set_contains(..., lookahead) is false for -1: the positive condition holds only with the asserted chars
+            var hasPositiveCondition = bestLargeCharSet is not null || !assertedChars.IsEmpty;
+            var hasNegativeCondition = !negatedChars.IsEmpty;
+            var positive = !hasPositiveCondition || (!assertedChars.IsEmpty && (assertedChars.Contains(CharacterSet.End - 1)
+                ? NegatedConditionsMatchDecodeError(assertedChars.Negate().AddChar(0))
+                : IncludedConditionsMatchDecodeError(assertedChars)));
+            var negative = !hasNegativeCondition || NegatedConditionsMatchDecodeError(negatedChars);
+            if (positive && negative)
+            {
+                return action;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whether the included ranges of render.rs (<c>add_character_range_conditions</c>) match -1: only a range from
+    /// '\0' to another character, rendered <c>(!eof &amp;&amp; lookahead &lt;= c)</c>.
+    /// </summary>
+    private static bool IncludedConditionsMatchDecodeError(CharacterSet characters)
+        => characters.Ranges[0] is { Start: 0 } first && first.End - 1 > 0;
+
+    /// <summary>
+    /// Whether the negated ranges of render.rs match -1: all of them do (<c>lookahead != c</c>,
+    /// <c>(lookahead &lt; a || b &lt; lookahead)</c>) except a range from '\0' to a character after 1, rendered
+    /// <c>lookahead &gt; c</c>.
+    /// </summary>
+    private static bool NegatedConditionsMatchDecodeError(CharacterSet characters)
+        => !(characters.Ranges[0] is { Start: 0 } first && first.End - 1 > 1);
 
     /// <summary>
     /// The target of the transition on the null character at the end of the input, where the lookahead of tree-sitter's
