@@ -97,6 +97,29 @@ public sealed partial class Language
         }
 
         using var input = new MemoryStream(data, writable: false);
+        return Load(input);
+    }
+
+    /// <summary>
+    /// Reads a language serialized by <see cref="Save"/> from memory, without copying it: the generated languages read
+    /// their tables from the data of their assembly.
+    /// </summary>
+    public static unsafe Language Load(ReadOnlySpan<byte> data)
+    {
+        if (data.IsEmpty)
+        {
+            return Load(Array.Empty<byte>());
+        }
+
+        fixed (byte* pointer = data)
+        {
+            using var input = new UnmanagedMemoryStream(pointer, data.Length);
+            return Load(input);
+        }
+    }
+
+    private static Language Load(Stream input)
+    {
         using var deflate = new DeflateStream(input, CompressionMode.Decompress);
         using var reader = new BinaryReader(deflate, Encoding.UTF8);
         if (reader.ReadUInt32() != Magic)

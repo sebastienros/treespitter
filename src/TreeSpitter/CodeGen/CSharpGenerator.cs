@@ -68,7 +68,6 @@ public static class CSharpGenerator
         writer.Line();
         writer.Line("private static class Holder");
         writer.Open();
-        // The data is declared first: static fields are initialized in the order of the declarations
         WriteData(writer, language.Save());
         writer.Line();
         writer.Line("public static readonly global::TreeSpitter.Language Instance = Create();");
@@ -134,9 +133,13 @@ public static class CSharpGenerator
         return builder.ToString();
     }
 
+    /// <summary>
+    /// Writes the serialized tables as a span of a constant array, which the compiler stores in the data of the assembly:
+    /// <c>Language.Load</c> reads them there, without allocating or keeping a copy.
+    /// </summary>
     private static void WriteData(CodeWriter writer, byte[] data)
     {
-        writer.Line("private static readonly byte[] Data =");
+        writer.Line("private static global::System.ReadOnlySpan<byte> Data => new byte[]");
         writer.Line("{");
         var line = new StringBuilder();
         for (var i = 0; i < data.Length; i++)

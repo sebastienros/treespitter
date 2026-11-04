@@ -77,6 +77,18 @@ public sealed class LanguageTests
     }
 
     [Fact]
+    public void ALanguageLoadsFromASpanLikeFromAnArray()
+    {
+        var saved = Fixtures.Language("json").Save();
+        var fromSpan = Language.Load(new ReadOnlySpan<byte>(saved));
+        var fromArray = Language.Load(saved);
+
+        Assert.Equal(fromArray.Save(), fromSpan.Save());
+        Assert.Equal("(document (array (number) (true)))", new Parser(fromSpan).Parse("[1, true]").ToSExpression());
+        Assert.ThrowsAny<IOException>(() => Language.Load(ReadOnlySpan<byte>.Empty));
+    }
+
+    [Fact]
     public void TheGeneratorEmitsAClassWithTheLanguage()
     {
         var source = CSharpGenerator.Generate(Fixtures.Language("json"), new CSharpGeneratorOptions { Namespace = "Demo", ClassName = "JsonParser" });
@@ -85,6 +97,7 @@ public sealed class LanguageTests
         Assert.Contains("public static partial class JsonParser", source);
         Assert.Contains("public bool Lex(global::TreeSpitter.Lexer lexer, int state) => _tables.Lex(lexer, state);", source);
         Assert.Contains("global::TreeSpitter.ILexFunction", source);
+        Assert.Contains("private static global::System.ReadOnlySpan<byte> Data => new byte[]", source);
     }
 
     [Fact]
