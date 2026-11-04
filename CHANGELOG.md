@@ -53,6 +53,13 @@ releases are `v*.*.*` tags, see [docs/release.md](docs/release.md).
 - Performance: the comparison of the trees of merged versions skips their shared subtrees (C++ 22% faster), the error
   recovery reuses its lists, and the lines of the input are indexed only as far as the error costs need them. The state
   minimization of the generator compares the successors of the states without lookups (10 to 26% faster compilations).
+- The generator is 2.4 to 4.6 times faster on the large grammars (C++ and Julia from 52 s to 11.5 s, the 27 grammars of
+  `TreeSpitter.Languages` from 320 s to 72 s per target framework), with the same tables: the closures collect their items
+  by rank, the item sets of the existing states are recycled and the states are looked up by packed keys, the entries of
+  the parse table are compact, the coincident tokens are bit matrices, the minimization merges the sorted tokens of two
+  states and doesn't compare the states equivalent to an earlier state of their group, the token conflicts are computed
+  before the parse table, and the enums are compared without boxing (see "The cost of the generation" in
+  docs/design.md).
 - Regular expressions use Unicode simple case folding for the `i` flag, fold the leaves of a class before the
   negations, negate `\p{name!=value}` and reject non-ASCII byte classes in `(?-u:...)`.
 

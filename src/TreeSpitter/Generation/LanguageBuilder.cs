@@ -250,8 +250,24 @@ internal sealed class LanguageBuilder(PreparedGrammar grammar, Tables tables)
     {
         var symbolCount = _parseTable.Symbols.Count;
         var states = _parseTable.States;
-        // The entries of the rows of the states, by symbol (the last one wins, like the designated initializers of C)
-        var rows = new SortedDictionary<int, ushort>[states.Count];
+        // The entries of the rows of the states, sorted by symbol (the last one wins, like the designated initializers of C)
+        var rows = new (int[] Symbols, ushort[] Values)[states.Count];
+        var row = new ushort[symbolCount];
+        var isSet = new bool[symbolCount];
+        var rowSymbols = new List<int>();
+        void Set(int symbol, ushort value)
+        {
+            if (!isSet[symbol])
+            {
+                isSet[symbol] = true;
+                rowSymbols.Add(symbol);
+            }
+
+            row[symbol] = value;
+        }
+
+        var terminalKeys = new int[16];
+        var terminalEntries = new int[16];
         var actions = new List<ulong>();
         var listIds = new Dictionary<ParseTableEntry, int>();
 
@@ -281,7 +297,7 @@ internal sealed class LanguageBuilder(PreparedGrammar grammar, Tables tables)
         }
 
         // Action list 0 is the empty list
-        ListId(new ParseTableEntry { Actions = [], Reusable = false });
+        ListId(new ParseTableEntry { Reusable = false });
 
         // Like render.rs: the first states and the states with many entries are "large" (a row of the parse table),
         // the others are "small" (lists of the lookaheads grouped by action list)
@@ -303,18 +319,36 @@ internal sealed class LanguageBuilder(PreparedGrammar grammar, Tables tables)
         for (var i = 0; i < states.Count; i++)
         {
             var state = states[i];
-            var row = rows[i] = [];
+            rowSymbols.Clear();
             foreach (var (symbol, action) in state.NonTerminalEntries.Entries)
             {
-                row[_symbolIds[symbol]] = (ushort)(action.IsShiftExtra ? i : action.State);
+                Set(_symbolIds[symbol], (ushort)(action.IsShiftExtra ? i : action.State));
             }
 
             groups.Clear();
-            // The end of a non-terminal extra has no symbol order in render.rs: it comes first
-            foreach (var (symbol, entry) in state.TerminalEntries.Entries.OrderBy(e => e.Key == Symbol.EndOfNonTerminalExtra ? -1 : _symbolIds[e.Key]))
+
+            // The end of a non-terminal extra has no symbol order in render.rs: it comes first (the keys are unique)
+            var terminalCount = state.TerminalEntries.Count;
+            if (terminalKeys.Length < terminalCount)
             {
+                terminalKeys = new int[terminalCount * 2];
+                terminalEntries = new int[terminalCount * 2];
+            }
+
+            for (var k = 0; k < terminalCount; k++)
+            {
+                var key = state.TerminalEntries.Keys[k];
+                terminalKeys[k] = key == Symbol.EndOfNonTerminalExtra ? -1 : _symbolIds[key];
+                terminalEntries[k] = k;
+            }
+
+            Array.Sort(terminalKeys, terminalEntries, 0, terminalCount);
+            for (var k = 0; k < terminalCount; k++)
+            {
+                var symbol = state.TerminalEntries.Keys[terminalEntries[k]];
+                var entry = state.TerminalEntries.Values[terminalEntries[k]];
                 var id = ListId(entry);
-                row[_symbolIds[symbol]] = (ushort)id;
+                Set(_symbolIds[symbol], (ushort)id);
                 if (!groups.TryGetValue(id, out var group))
                 {
                     groups[id] = group = [];
@@ -323,6 +357,15 @@ internal sealed class LanguageBuilder(PreparedGrammar grammar, Tables tables)
                 group.Add(symbol);
             }
 
+            rowSymbols.Sort();
+            var values = new ushort[rowSymbols.Count];
+            for (var k = 0; k < values.Length; k++)
+            {
+                values[k] = row[rowSymbols[k]];
+                isSet[rowSymbols[k]] = false;
+            }
+
+            rows[i] = ([.. rowSymbols], values);
             lookaheadOrderStarts[i] = lookaheadOrder.Count;
             if (i >= largeStateCount)
             {
@@ -353,9 +396,10 @@ internal sealed class LanguageBuilder(PreparedGrammar grammar, Tables tables)
             var table = new ushort[states.Count * symbolCount];
             for (var i = 0; i < rows.Length; i++)
             {
-                foreach (var (symbol, value) in rows[i])
+                var (symbols, values) = rows[i];
+                for (var k = 0; k < symbols.Length; k++)
                 {
-                    table[i * symbolCount + symbol] = value;
+                    table[i * symbolCount + symbols[k]] = values[k];
                 }
             }
 
@@ -377,7 +421,7 @@ internal sealed class LanguageBuilder(PreparedGrammar grammar, Tables tables)
     /// empty) are stored once. A lookup reads the index of the chunk, then the entry. The chunks are as small as the
     /// 16-bit indices allow: 16 symbols, or more for the largest grammars.
     /// </summary>
-    private static void BuildChunkedTable(Language language, SortedDictionary<int, ushort>[] rows, int symbolCount)
+    private static void BuildChunkedTable(Language language, (int[] Symbols, ushort[] Values)[] rows, int symbolCount)
     {
         var row = new char[symbolCount];
         for (var shift = 4; ; shift++)
@@ -391,9 +435,10 @@ internal sealed class LanguageBuilder(PreparedGrammar grammar, Tables tables)
             for (var state = 0; state < rows.Length && fits; state++)
             {
                 Array.Clear(row, 0, row.Length);
-                foreach (var (symbol, value) in rows[state])
+                var (rowSymbols, rowValues) = rows[state];
+                for (var k = 0; k < rowSymbols.Length; k++)
                 {
-                    row[symbol] = (char)value;
+                    row[rowSymbols[k]] = (char)rowValues[k];
                 }
 
                 for (var c = 0; c < chunksPerRow; c++)
