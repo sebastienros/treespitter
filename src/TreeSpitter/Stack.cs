@@ -280,6 +280,72 @@ internal sealed class ParseStack
         head.Node = newNode;
     }
 
+    /// <summary>
+    /// The pop of <see cref="PopCount"/> when the path has no merged nodes: the children are written to the arena
+    /// directly, the trailing extras to <paramref name="trailingExtras"/>. Returns false when the general pop is
+    /// needed.
+    /// </summary>
+    public bool TryPopSinglePath(int version, int count, SubtreeList trailingExtras, out int baseNode, out int firstChild, out int childCount)
+    {
+        var nodes = _nodes;
+        var top = _heads[version].Node;
+        var current = top;
+        var links = 0;
+        var nonExtra = 0;
+        var trailing = 0;
+        while (nonExtra < count)
+        {
+            ref var node = ref nodes[current];
+            var subtree = node.Link0.Subtree;
+            if (node.LinkCount != 1 || subtree == 0)
+            {
+                baseNode = firstChild = childCount = 0;
+                return false;
+            }
+
+            if ((_arena.Nodes[subtree].Flags & SubtreeFlags.Extra) != 0)
+            {
+                if (nonExtra == 0)
+                {
+                    trailing++;
+                }
+            }
+            else
+            {
+                nonExtra++;
+            }
+
+            links++;
+            current = node.Link0.Node;
+        }
+
+        trailingExtras.Clear();
+        childCount = links - trailing;
+        firstChild = _arena.ReserveChildren(childCount);
+        var children = _arena.Children;
+        current = top;
+        for (var i = 0; i < trailing; i++)
+        {
+            trailingExtras.Add(nodes[current].Link0.Subtree);
+            current = nodes[current].Link0.Node;
+        }
+
+        if (trailing > 1)
+        {
+            trailingExtras.Reverse();
+        }
+
+        for (var k = childCount - 1; k >= 0; k--)
+        {
+            ref var node = ref nodes[current];
+            children[firstChild + k] = node.Link0.Subtree;
+            current = node.Link0.Node;
+        }
+
+        baseNode = current;
+        return true;
+    }
+
     public List<StackSlice> PopCount(int version, int count) => Iterate(version, IterationKind.PopCount, count, true);
 
     public List<StackSlice> PopPending(int version)

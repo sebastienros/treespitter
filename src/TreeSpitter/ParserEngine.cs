@@ -431,6 +431,40 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
         return _stack.VersionCount > initialVersionCount ? initialVersionCount : VersionNone;
     }
 
+    /// <summary>
+    /// A reduction of the only version of the stack when the popped path has no merged nodes: the same result as
+    /// <see cref="Reduce"/> followed by the renumbering of the new version, without creating a version.
+    /// </summary>
+    private bool ReduceInPlace(int version, ushort symbol, int count, int dynamicPrecedence, ushort productionId, bool endOfNonTerminalExtra)
+    {
+        if (!_stack.TryPopSinglePath(version, count, _trailingExtras, out var baseNode, out var firstChild, out var childCount))
+        {
+            return false;
+        }
+
+        ref var stackNode = ref _stack.Node(baseNode);
+        var state = stackNode.State;
+        var parent = _arena.NewNode(symbol, firstChild, childCount, productionId, stackNode.Position);
+        var nextState = _language.NextState(state, symbol);
+        ref var parentData = ref _arena[parent];
+        if (endOfNonTerminalExtra && nextState == state)
+        {
+            parentData.Flags |= SubtreeFlags.Extra;
+        }
+
+        parentData.ParseState = state;
+        parentData.DynamicPrecedence += dynamicPrecedence;
+
+        _stack.Head(version).Node = baseNode;
+        _stack.Push(version, parent, false, nextState);
+        for (var j = 0; j < _trailingExtras.Count; j++)
+        {
+            _stack.Push(version, _trailingExtras.Items[j], false, nextState);
+        }
+
+        return true;
+    }
+
     private void Accept(int version, int lookahead)
     {
         _stack.Push(version, lookahead, false, 1);
@@ -1054,6 +1088,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
             }
 
             var didReduce = false;
+            var reducedInPlace = false;
             var lastReductionVersion = VersionNone;
             for (var i = 0; i < entryCount; i++)
             {
@@ -1074,6 +1109,13 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
 
                     case ParseActionType.Reduce:
                         {
+                            if (entryCount == 1 && _stack.VersionCount == 1 &&
+                                ReduceInPlace(version, action.StateOrSymbol, action.ChildCount, action.DynamicPrecedence, action.ProductionId, lookahead == 0))
+                            {
+                                reducedInPlace = true;
+                                break;
+                            }
+
                             var isFragile = entryCount > 1;
                             var endOfNonTerminalExtra = lookahead == 0;
                             var reductionVersion = Reduce(version, action.StateOrSymbol, action.ChildCount, action.DynamicPrecedence, action.ProductionId, isFragile, endOfNonTerminalExtra);
@@ -1096,9 +1138,13 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
                 }
             }
 
-            if (lastReductionVersion != VersionNone)
+            if (reducedInPlace || lastReductionVersion != VersionNone)
             {
-                _stack.RenumberVersion(lastReductionVersion, version);
+                if (!reducedInPlace)
+                {
+                    _stack.RenumberVersion(lastReductionVersion, version);
+                }
+
                 state = _stack.State(version);
                 if (lookahead == 0)
                 {
