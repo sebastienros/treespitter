@@ -661,20 +661,72 @@ internal sealed class SubtreeArena
         /// <summary>The index of the slot of the node in the children array, or -1 for the root.</summary>
         public int Slot;
         public int Tree;
-        public int Start;
-        public int OldEnd;
-        public int NewEnd;
+
+        /// <summary>The start of the node in the input before the edit, for the points of its children.</summary>
+        public int Position;
+        public Length Start;
+        public Length OldEnd;
+        public Length NewEnd;
+    }
+
+    /// <summary>
+    /// A length in bytes and its extent, tree-sitter's <c>Length</c>: the extent is the number of rows, and the column
+    /// of the end on the last row (or the number of bytes when there's no row). The edits compute them only for the
+    /// trees whose nodes can depend on their column.
+    /// </summary>
+    private readonly record struct Length(int Bytes, int Row, int Column)
+    {
+        public static Length Add(Length left, Length right) => right.Row > 0
+            ? new(left.Bytes + right.Bytes, left.Row + right.Row, right.Column)
+            : new(left.Bytes + right.Bytes, left.Row, left.Column + right.Column);
+
+        public static Length Sub(Length left, Length right) => left.Row > right.Row
+            ? new(Math.Max(0, left.Bytes - right.Bytes), left.Row - right.Row, left.Column)
+            : new(Math.Max(0, left.Bytes - right.Bytes), 0, Math.Max(0, left.Column - right.Column));
+
+        public static Length SaturatingSub(Length left, Length right) => left.Bytes > right.Bytes ? Sub(left, right) : default;
+    }
+
+    /// <summary>The length from a position to another one, with the extent of their points.</summary>
+    private static Length Extent(Func<int, Point>? pointAt, int start, int end)
+    {
+        if (pointAt is null)
+        {
+            return new(end - start, 0, 0);
+        }
+
+        var startPoint = pointAt(start);
+        var endPoint = pointAt(end);
+        return endPoint.Row > startPoint.Row
+            ? new(end - start, endPoint.Row - startPoint.Row, endPoint.Column)
+            : new(end - start, 0, Math.Max(0, endPoint.Column - startPoint.Column));
     }
 
     /// <summary>
     /// Applies an edit to a tree, tree-sitter's <c>ts_subtree_edit</c>: the nodes touching the edit are copied with their
     /// new padding and size and flagged as changed, so that the next parse doesn't reuse them. Returns the new root.
     /// </summary>
-    public int Edit(int root, int start, int oldEnd, int newEnd)
+    /// <param name="root">The root of the tree.</param>
+    /// <param name="edit">The edit, with its points when <paramref name="pointAt"/> is given.</param>
+    /// <param name="pointAt">
+    /// The points of the input before the edit, for the nodes depending on their column, which are invalidated up to
+    /// the end of the line of the edit like in tree-sitter; without it, the nodes after the edit which depend on their
+    /// column are all invalidated.
+    /// </param>
+    public int Edit(int root, InputEdit edit, Func<int, Point>? pointAt)
     {
         var stack = _editStack;
         stack.Clear();
-        stack.Push(new EditEntry { Slot = -1, Tree = root, Start = start, OldEnd = oldEnd, NewEnd = newEnd });
+        var hasPoints = pointAt is not null;
+        stack.Push(new EditEntry
+        {
+            Slot = -1,
+            Tree = root,
+            Position = 0,
+            Start = hasPoints ? new(edit.StartByte, edit.StartPoint!.Value.Row, edit.StartPoint.Value.Column) : new(edit.StartByte, 0, 0),
+            OldEnd = hasPoints ? new(edit.OldEndByte, edit.OldEndPoint!.Value.Row, edit.OldEndPoint.Value.Column) : new(edit.OldEndByte, 0, 0),
+            NewEnd = hasPoints ? new(edit.NewEndByte, edit.NewEndPoint!.Value.Row, edit.NewEndPoint.Value.Column) : new(edit.NewEndByte, 0, 0),
+        });
         var result = root;
         while (stack.Count > 0)
         {
@@ -682,42 +734,44 @@ internal sealed class SubtreeArena
             var editStart = entry.Start;
             var editOldEnd = entry.OldEnd;
             var editNewEnd = entry.NewEnd;
-            var isNoop = editOldEnd == editStart && editNewEnd == editStart;
-            var isPureInsertion = editOldEnd == editStart;
+            var isNoop = editOldEnd.Bytes == editStart.Bytes && editNewEnd.Bytes == editStart.Bytes;
+            var isPureInsertion = editOldEnd.Bytes == editStart.Bytes;
+            var parentDependsOnColumn = (Nodes[entry.Tree].Flags & SubtreeFlags.DependsOnColumn) != 0;
+            var columnShifted = editNewEnd.Column != editOldEnd.Column;
 
             ref var data = ref Nodes[entry.Tree];
-            var size = data.Size;
-            var padding = data.Padding;
-            var totalSize = padding + size;
-            var endByte = totalSize + data.LookaheadBytes;
-            if (editStart > endByte || (isNoop && editStart == endByte))
+            var padding = Extent(pointAt, entry.Position, entry.Position + data.Padding);
+            var size = Extent(pointAt, entry.Position + data.Padding, entry.Position + data.Padding + data.Size);
+            var totalSize = Length.Add(padding, size);
+            var endByte = totalSize.Bytes + data.LookaheadBytes;
+            if (editStart.Bytes > endByte || (isNoop && editStart.Bytes == endByte))
             {
                 continue;
             }
 
-            if (editOldEnd <= padding)
+            if (editOldEnd.Bytes <= padding.Bytes)
             {
                 // The edit is in the space before the node: shift it
-                padding = editNewEnd + (padding - editOldEnd);
+                padding = Length.Add(editNewEnd, Length.Sub(padding, editOldEnd));
             }
-            else if (editStart < padding)
+            else if (editStart.Bytes < padding.Bytes)
             {
                 // The edit starts before the node and extends into it: shrink its content
-                size = Math.Max(0, size - (editOldEnd - padding));
+                size = Length.SaturatingSub(size, Length.Sub(editOldEnd, padding));
                 padding = editNewEnd;
             }
-            else if (editStart < totalSize || (editStart == totalSize && isPureInsertion))
+            else if (editStart.Bytes < totalSize.Bytes || (editStart.Bytes == totalSize.Bytes && isPureInsertion))
             {
                 // The edit is within the node: resize it
-                size = editNewEnd - padding + Math.Max(0, totalSize - editOldEnd);
+                size = Length.Add(Length.Sub(editNewEnd, padding), Length.SaturatingSub(totalSize, editOldEnd));
             }
 
             // A copy: the other trees sharing the node keep it unchanged
             var copy = Allocate();
             ref var copied = ref Nodes[copy];
             copied = Nodes[entry.Tree];
-            copied.Padding = padding;
-            copied.Size = size;
+            copied.Padding = padding.Bytes;
+            copied.Size = size.Bytes;
             copied.Flags |= SubtreeFlags.HasChanges;
             var childCount = copied.ChildCount;
             if (childCount > 0)
@@ -737,27 +791,27 @@ internal sealed class SubtreeArena
             }
 
             var first = Nodes[copy].FirstChild;
-            var childRight = 0;
-
-            // The rows and columns which tree-sitter compares for the nodes depending on their column aren't tracked:
-            // the children after the edit of these nodes are invalidated
-            var parentDependsOnColumn = (Nodes[copy].Flags & SubtreeFlags.DependsOnColumn) != 0;
+            var childRight = default(Length);
             for (var i = 0; i < childCount; i++)
             {
                 var child = Children[first + i];
-                var childSize = Nodes[child].Padding + Nodes[child].Size;
                 var childLeft = childRight;
-                childRight = childLeft + childSize;
+                var childStart = entry.Position + childLeft.Bytes;
+                var childSize = Extent(pointAt, childStart, childStart + Nodes[child].Padding + Nodes[child].Size);
+                childRight = Length.Add(childLeft, childSize);
 
                 // The children ending before the edit are not affected
-                if (childRight + Nodes[child].LookaheadBytes < editStart)
+                if (childRight.Bytes + Nodes[child].LookaheadBytes < editStart.Bytes)
                 {
                     continue;
                 }
 
-                // The children after the edit are not affected, unless their validity depends on their column
-                if ((childLeft > editOldEnd || (childLeft == editOldEnd && childSize > 0 && i > 0)) &&
-                    !parentDependsOnColumn && (Nodes[child].Flags & SubtreeFlags.DependsOnColumn) == 0)
+                // The children after the edit are not affected, unless their validity depends on their column: then
+                // the children are invalidated until a line break (without the points, until the end)
+                var childDependsOnColumn = (Nodes[child].Flags & SubtreeFlags.DependsOnColumn) != 0;
+                if ((childLeft.Bytes > editOldEnd.Bytes || (childLeft.Bytes == editOldEnd.Bytes && childSize.Bytes > 0 && i > 0)) &&
+                    (!parentDependsOnColumn || (hasPoints && childLeft.Row > padding.Row)) &&
+                    (!childDependsOnColumn || (hasPoints && (!columnShifted || childLeft.Row > editOldEnd.Row))))
                 {
                     break;
                 }
@@ -766,13 +820,14 @@ internal sealed class SubtreeArena
                 {
                     Slot = first + i,
                     Tree = child,
-                    Start = Math.Max(0, editStart - childLeft),
-                    OldEnd = Math.Max(0, editOldEnd - childLeft),
-                    NewEnd = Math.Max(0, editNewEnd - childLeft),
+                    Position = childStart,
+                    Start = Length.SaturatingSub(editStart, childLeft),
+                    OldEnd = Length.SaturatingSub(editOldEnd, childLeft),
+                    NewEnd = Length.SaturatingSub(editNewEnd, childLeft),
                 };
 
                 // The inserted text goes to the first child touching the edit, the next ones only shrink
-                if (childRight > editStart || (childRight == editStart && isPureInsertion))
+                if (childRight.Bytes > editStart.Bytes || (childRight.Bytes == editStart.Bytes && isPureInsertion))
                 {
                     editNewEnd = editStart;
                 }

@@ -138,9 +138,28 @@ internal static class IncrementalCheck
     private static byte[] Apply(SyntaxTree tree, NativeUtf8Parser.NativeTree nativeTree, byte[] input, Edit edit)
     {
         byte[] newInput = [.. input.AsSpan(0, edit.Position), .. edit.Inserted, .. input.AsSpan(edit.Position + edit.DeletedLength)];
-        tree.Edit(new InputEdit(edit.Position, edit.Position + edit.DeletedLength, edit.Position + edit.Inserted.Length));
+        tree.Edit(new InputEdit(
+            edit.Position, edit.Position + edit.DeletedLength, edit.Position + edit.Inserted.Length,
+            PointAt(input, edit.Position), PointAt(input, edit.Position + edit.DeletedLength), PointAt(newInput, edit.Position + edit.Inserted.Length)));
         nativeTree.Edit(input, newInput, edit.Position, edit.Position + edit.DeletedLength, edit.Position + edit.Inserted.Length);
         return newInput;
+    }
+
+    /// <summary>The point of a position, with the column in bytes, like the points given to the native parser.</summary>
+    public static Point PointAt(byte[] input, int position)
+    {
+        var row = 0;
+        var lineStart = 0;
+        for (var i = 0; i < position && i < input.Length; i++)
+        {
+            if (input[i] == '\n')
+            {
+                row++;
+                lineStart = i + 1;
+            }
+        }
+
+        return new Point(row, position - lineStart);
     }
 
     /// <summary>tree-sitter's <c>get_random_edit</c>, as in the tests.</summary>

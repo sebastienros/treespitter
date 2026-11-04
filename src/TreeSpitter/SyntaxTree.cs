@@ -16,7 +16,38 @@ public readonly record struct Point(int Row, int Column)
 /// <param name="StartByte">The start of the edit.</param>
 /// <param name="OldEndByte">The end of the replaced text, in the old input.</param>
 /// <param name="NewEndByte">The end of the inserted text, in the new input.</param>
-public readonly record struct InputEdit(int StartByte, int OldEndByte, int NewEndByte);
+/// <remarks>
+/// The points of the edit, like the ones of tree-sitter's <c>TSInputEdit</c>, matter for the grammars whose external
+/// scanner reads the column of the tokens (layout-sensitive languages): with <see cref="NewEndPoint"/>, the edit
+/// invalidates the nodes depending on their column up to the end of the line, like tree-sitter. Without it, all the
+/// nodes after the edit which depend on their column are invalidated.
+/// </remarks>
+public readonly record struct InputEdit(int StartByte, int OldEndByte, int NewEndByte)
+{
+    /// <summary>Creates an edit with its points.</summary>
+    /// <param name="startByte">The start of the edit.</param>
+    /// <param name="oldEndByte">The end of the replaced text, in the old input.</param>
+    /// <param name="newEndByte">The end of the inserted text, in the new input.</param>
+    /// <param name="startPoint">The point of the start of the edit.</param>
+    /// <param name="oldEndPoint">The point of the end of the replaced text, in the old input.</param>
+    /// <param name="newEndPoint">The point of the end of the inserted text, in the new input.</param>
+    public InputEdit(int startByte, int oldEndByte, int newEndByte, Point startPoint, Point oldEndPoint, Point newEndPoint)
+        : this(startByte, oldEndByte, newEndByte)
+    {
+        StartPoint = startPoint;
+        OldEndPoint = oldEndPoint;
+        NewEndPoint = newEndPoint;
+    }
+
+    /// <summary>Gets the point of the start of the edit, or null to compute it from the edited tree.</summary>
+    public Point? StartPoint { get; init; }
+
+    /// <summary>Gets the point of the end of the replaced text in the old input, or null to compute it from the edited tree.</summary>
+    public Point? OldEndPoint { get; init; }
+
+    /// <summary>Gets the point of the end of the inserted text in the new input, or null when it's unknown.</summary>
+    public Point? NewEndPoint { get; init; }
+}
 
 /// <summary>
 /// A syntax tree, the result of a parse. The nodes are exposed as <see cref="SyntaxNode"/> values. Positions are byte
@@ -28,6 +59,11 @@ public sealed class SyntaxTree : IDisposable
     private readonly byte[] _input;
     private SubtreeArena? _arena;
     private LineIndex? _lines;
+
+    // The edits applied since the parse, with their points, to compute the points of the edited input, or null after
+    // an edit without points
+    private List<InputEdit>? _edits = [];
+    private Stack<InputEdit>? _shiftedEdits;
 
     // The first node created by the parse of the tree, which balances the tree when it's edited or reused, or -1
     private int _unbalancedFrom;
@@ -83,8 +119,78 @@ public sealed class SyntaxTree : IDisposable
         lock (arena)
         {
             Balance();
-            Root = arena.Edit(Root, edit.StartByte, edit.OldEndByte, edit.NewEndByte);
+            if (_edits is not null && edit.NewEndPoint is { } newEndPoint)
+            {
+                // The points of the edited input, for the nodes depending on their column (only external scanners
+                // read the column)
+                edit = edit with
+                {
+                    StartPoint = edit.StartPoint ?? EditedPointAt(edit.StartByte),
+                    OldEndPoint = edit.OldEndPoint ?? EditedPointAt(edit.OldEndByte),
+                    NewEndPoint = newEndPoint,
+                };
+                Root = arena.Edit(Root, edit, Language.ExternalTokenCount > 0 ? EditedPointAt : null);
+                _edits.Add(edit);
+            }
+            else
+            {
+                Root = arena.Edit(Root, edit with { StartPoint = null, OldEndPoint = null, NewEndPoint = null }, null);
+                _edits = null;
+            }
         }
+    }
+
+    /// <summary>
+    /// The point of a position of the edited input, the input of the parse after the edits applied to the tree: the
+    /// position is mapped back through the edits, and its point in the input of the parse shifted by them, like the
+    /// points of tree-sitter's nodes after <c>ts_subtree_edit</c>. A position in an inserted text, whose newlines aren't
+    /// known, is approximated from the end of the insertion.
+    /// </summary>
+    private Point EditedPointAt(int position)
+    {
+        var edits = _edits!;
+        var index = edits.Count;
+        var shifted = _shiftedEdits ??= new Stack<InputEdit>();
+        Point point;
+        while (true)
+        {
+            if (index == 0)
+            {
+                point = PointAt(position);
+                break;
+            }
+
+            var edit = edits[--index];
+            if (position <= edit.StartByte)
+            {
+                continue;
+            }
+
+            if (position >= edit.NewEndByte)
+            {
+                // After the edit: the position in the input before it
+                shifted.Push(edit);
+                position = position - edit.NewEndByte + edit.OldEndByte;
+                continue;
+            }
+
+            var newEnd = edit.NewEndPoint!.Value;
+            point = new Point(newEnd.Row, Math.Max(0, newEnd.Column - (edit.NewEndByte - position)));
+            break;
+        }
+
+        // The point shifted by the edits which precede the position, like length_add(new_end, length_sub(position, old_end))
+        while (shifted.Count > 0)
+        {
+            var edit = shifted.Pop();
+            var oldEnd = edit.OldEndPoint!.Value;
+            var newEnd = edit.NewEndPoint!.Value;
+            point = point.Row > oldEnd.Row
+                ? new Point(newEnd.Row + point.Row - oldEnd.Row, point.Column)
+                : new Point(newEnd.Row, newEnd.Column + Math.Max(0, point.Column - oldEnd.Column));
+        }
+
+        return point;
     }
 
     /// <summary>
@@ -116,7 +222,7 @@ public sealed class SyntaxTree : IDisposable
         {
             // Balanced once for all the copies
             Balance();
-            return new(Language, _input, Input.Length, arena, Root, -1);
+            return new(Language, _input, Input.Length, arena, Root, -1) { _lines = _lines, _edits = _edits is null ? null : [.. _edits] };
         }
     }
 

@@ -356,11 +356,30 @@ public sealed class IncrementalParsingTests
     private static Edit Invert(byte[] input, Edit edit) =>
         new(edit.Position, edit.Inserted.Length, input.AsSpan(edit.Position, edit.DeletedLength).ToArray());
 
-    /// <summary>Edits the tree and returns the new input.</summary>
+    /// <summary>Edits the tree, with the points of the edit like tree-sitter's tests, and returns the new input.</summary>
     private static byte[] Apply(SyntaxTree tree, byte[] input, Edit edit)
     {
-        tree.Edit(new InputEdit(edit.Position, edit.Position + edit.DeletedLength, edit.Position + edit.Inserted.Length));
-        return [.. input.AsSpan(0, edit.Position), .. edit.Inserted, .. input.AsSpan(edit.Position + edit.DeletedLength)];
+        byte[] newInput = [.. input.AsSpan(0, edit.Position), .. edit.Inserted, .. input.AsSpan(edit.Position + edit.DeletedLength)];
+        tree.Edit(new InputEdit(
+            edit.Position, edit.Position + edit.DeletedLength, edit.Position + edit.Inserted.Length,
+            PointAt(input, edit.Position), PointAt(input, edit.Position + edit.DeletedLength), PointAt(newInput, edit.Position + edit.Inserted.Length)));
+        return newInput;
+    }
+
+    private static Point PointAt(byte[] input, int position)
+    {
+        var row = 0;
+        var lineStart = 0;
+        for (var i = 0; i < position; i++)
+        {
+            if (input[i] == '\n')
+            {
+                row++;
+                lineStart = i + 1;
+            }
+        }
+
+        return new Point(row, position - lineStart);
     }
 
     /// <summary>tree-sitter's <c>check_consistent_sizes</c>.</summary>
