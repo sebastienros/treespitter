@@ -57,7 +57,8 @@ public static class GrammarJsonReader
             Inherits = ToStringValue(Get(grammar, "inherits"), "inherits"),
             Word = ToStringValue(Get(grammar, "word"), "word"),
             Rules = rules,
-            Extras = extras is null ? [new PatternRule("\\s")] : ToRules(extras, "extras"),
+            // Like tree-sitter, a grammar.json without extras has none (the DSL defaults them to white space)
+            Extras = ToRules(extras, "extras"),
             Conflicts = Items(Get(grammar, "conflicts"), "conflicts").Select(c => ToStrings(c, "conflicts")).ToList(),
             Precedences = Items(Get(grammar, "precedences"), "precedences").Select(p => ToRules(p, "precedences")).ToList(),
             Externals = ToRules(Get(grammar, "externals"), "externals"),

@@ -115,6 +115,9 @@ internal sealed class RegexParser
     private bool _ignoreCase;
     private bool _dotAll;
 
+    // Cleared by (?-u): the classes are byte classes
+    private bool _unicode = true;
+
     public RegexParser(string pattern, string flags)
     {
         _pattern = pattern;
@@ -304,10 +307,10 @@ internal sealed class RegexParser
             case '(':
                 return ParseGroup();
             case '[':
-                return new RegexClass(ParseClass());
+                return ByteClass(ParseClass());
             case '.':
                 _position++;
-                return new RegexClass(_dotAll ? CharSet.All : AllButNewLine);
+                return ByteClass(_dotAll ? CharSet.All : AllButNewLine);
             case '^':
             case '$':
                 throw Error("assertions are not supported");
@@ -346,6 +349,7 @@ internal sealed class RegexParser
 
         var savedIgnoreCase = _ignoreCase;
         var savedDotAll = _dotAll;
+        var savedUnicode = _unicode;
 
         if (!AtEnd && Current == '?')
         {
@@ -402,6 +406,7 @@ internal sealed class RegexParser
         _position++;
         _ignoreCase = savedIgnoreCase;
         _dotAll = savedDotAll;
+        _unicode = savedUnicode;
         return content;
     }
 
@@ -433,8 +438,10 @@ internal sealed class RegexParser
                 case 's':
                     _dotAll = enable;
                     break;
-                case 'm':
                 case 'u':
+                    _unicode = enable;
+                    break;
+                case 'm':
                 case 'U':
                 case 'R':
                     // Line anchors aren't supported anyway, laziness doesn't change the longest match, Unicode is the default
@@ -477,7 +484,7 @@ internal sealed class RegexParser
         _position = start;
         if (TryParseClassEscape(out var set))
         {
-            return Class(set);
+            return ByteClass(set);
         }
 
         return Literal(ParseCharEscape(inClass: false));
@@ -493,25 +500,23 @@ internal sealed class RegexParser
         }
 
         var c = _pattern[_position + 1];
+        bool negatedClass;
         switch (c)
         {
             case 'd':
-                set = Digit;
-                break;
             case 'D':
-                set = Digit.Negate();
+                set = Digit;
+                negatedClass = c == 'D';
                 break;
             case 'w':
-                set = Word;
-                break;
             case 'W':
-                set = Word.Negate();
+                set = Word;
+                negatedClass = c == 'W';
                 break;
             case 's':
-                set = Space;
-                break;
             case 'S':
-                set = Space.Negate();
+                set = Space;
+                negatedClass = c == 'S';
                 break;
             case 'p':
             case 'P':
@@ -546,6 +551,14 @@ internal sealed class RegexParser
                         name = name.Substring(1);
                     }
 
+                    // \p{name!=value} is the negation of \p{name=value} (regex-syntax 0.8.11)
+                    var notEqual = name.IndexOf("!=", StringComparison.Ordinal);
+                    if (notEqual >= 0)
+                    {
+                        negated = !negated;
+                        name = name.Substring(0, notEqual) + "=" + name.Substring(notEqual + 2);
+                    }
+
                     try
                     {
                         set = UnicodeProperties.Get(name);
@@ -555,11 +568,7 @@ internal sealed class RegexParser
                         throw Error(e.Message);
                     }
 
-                    if (negated)
-                    {
-                        set = set.Negate();
-                    }
-
+                    set = FoldThenNegate(set, negated);
                     return true;
                 }
 
@@ -567,6 +576,7 @@ internal sealed class RegexParser
                 return false;
         }
 
+        set = FoldThenNegate(set, negatedClass);
         _position += 2;
         return true;
     }
@@ -690,6 +700,8 @@ internal sealed class RegexParser
             _position++;
         }
 
+        // The code points and ranges, folded at the end, and the sets which are already folded (and negated)
+        var leaves = CharSet.Empty;
         var set = CharSet.Empty;
         var first = true;
         while (true)
@@ -737,7 +749,8 @@ internal sealed class RegexParser
                 if (highSet is not null)
                 {
                     // [a-\d]: the dash is a literal
-                    set = set.Union(CharSet.Single(low)).Union(CharSet.Single('-')).Union(highSet);
+                    leaves = leaves.Union(CharSet.Single(low)).Union(CharSet.Single('-'));
+                    set = set.Union(highSet);
                     continue;
                 }
 
@@ -746,20 +759,20 @@ internal sealed class RegexParser
                     throw Error("range out of order in character class");
                 }
 
-                set = set.Union(CharSet.Range(low, high));
+                leaves = leaves.Union(CharSet.Range(low, high));
             }
             else
             {
-                set = set.Union(CharSet.Single(low));
+                leaves = leaves.Union(CharSet.Single(low));
             }
         }
 
-        // Like tree-sitter, the leaves are folded before the negation
         if (_ignoreCase)
         {
-            set = set.CaseFold();
+            leaves = leaves.CaseFold();
         }
 
+        set = set.Union(leaves);
         return negated ? set.Negate() : set;
     }
 
@@ -828,7 +841,7 @@ internal sealed class RegexParser
         }
 
         _position = end + 2;
-        set = negated ? posix.Negate() : posix;
+        set = FoldThenNegate(posix, negated);
         return true;
     }
 
@@ -846,7 +859,40 @@ internal sealed class RegexParser
         return new RegexLiteral([codePoint]);
     }
 
-    private RegexNode Class(CharSet set) => new RegexClass(_ignoreCase ? set.CaseFold() : set);
+    /// <summary>
+    /// A class, which can't have non-ASCII bytes in a byte class (<c>(?-u:...)</c>): tree-sitter 0.27 rejects them, they
+    /// are part of UTF-8 sequences.
+    /// </summary>
+    private RegexClass ByteClass(CharSet set)
+    {
+        if (!_unicode)
+        {
+            foreach (var (start, end) in set.Intersect(CharSet.Range(0, 0xFF)).Ranges)
+            {
+                if (end >= 0x80)
+                {
+                    var bytes = start == end ? $"\\x{start:x2}" : $"\\x{start:x2}-\\x{end:x2}";
+                    throw Error($"The non-ASCII byte class {bytes} via (?-u:...) is not supported. Remove the `-u` flag.");
+                }
+            }
+        }
+
+        return new RegexClass(set);
+    }
+
+    /// <summary>
+    /// Like tree-sitter 0.27, the leaves of a class (code points, ranges, properties, POSIX and Perl classes) are
+    /// folded, then the negations are applied.
+    /// </summary>
+    private CharSet FoldThenNegate(CharSet set, bool negated)
+    {
+        if (_ignoreCase)
+        {
+            set = set.CaseFold();
+        }
+
+        return negated ? set.Negate() : set;
+    }
 
     private RegexParseException Error(string message) => new(_pattern, _position, message);
 }

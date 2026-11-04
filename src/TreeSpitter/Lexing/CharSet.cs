@@ -277,41 +277,38 @@ internal sealed class CharSet : IEquatable<CharSet>
     public bool Overlaps(CharSet other) => !Intersect(other).IsEmpty;
 
     /// <summary>
-    /// Adds the case variants of the chars, like tree-sitter's handling of the <c>i</c> flag: the long s (U+017F) and
-    /// the Kelvin sign (U+212A) aren't folded onto the ASCII letters.
+    /// Adds the case variants of the chars with Unicode simple case folding, like tree-sitter 0.27's handling of the
+    /// <c>i</c> flag (<c>fold_ascii_safe</c>): the long s (U+017F) and the Kelvin sign (U+212A) don't fold onto the
+    /// ASCII letters, and the ASCII letters don't fold onto them, but they stay when the set has them.
     /// </summary>
     public CharSet CaseFold()
     {
         var ranges = new List<(int, int)>(Ranges);
-        var budget = 0x30000; // Huge ranges, like negated classes, are already closed under case folding in practice
-
+        var chars = CaseFolding.Chars;
         foreach (var (start, end) in Ranges)
         {
-            if (end - start > budget)
+            // The code points of the range which have case variants
+            var index = Array.BinarySearch(chars, start);
+            if (index < 0)
             {
-                continue;
+                index = ~index;
             }
 
-            budget -= end - start;
-
-            for (var c = start; c <= end; c++)
+            for (; index < chars.Length && chars[index] <= end; index++)
             {
-                if (c is 0x017F or 0x212A || c > 0xFFFF || c is >= 0xD800 and <= 0xDFFF)
+                if (chars[index] is 0x017F or 0x212A)
                 {
                     continue;
                 }
 
-                var ch = (char)c;
-                var upper = char.ToUpperInvariant(ch);
-                var lower = char.ToLowerInvariant(ch);
-                if (upper != ch && !(c < 128 ^ upper < 128))
+                var @class = CaseFolding.ClassOfChar[index];
+                for (var i = CaseFolding.ClassStarts[@class]; i < CaseFolding.ClassStarts[@class + 1]; i++)
                 {
-                    ranges.Add((upper, upper));
-                }
-
-                if (lower != ch && !(c < 128 ^ lower < 128))
-                {
-                    ranges.Add((lower, lower));
+                    var member = CaseFolding.Members[i];
+                    if (member is not (0x017F or 0x212A))
+                    {
+                        ranges.Add((member, member));
+                    }
                 }
             }
         }

@@ -103,6 +103,29 @@ internal sealed class ParseTableBuilder
             AddActions([.. _parseStateInfoById[entry.StateId].PrecedingSymbols], entry.PrecedingAuxiliarySymbols, entry.StateId, itemSet);
         }
 
+        // The declared conflicts which didn't occur, sorted like tree-sitter 0.27
+        if (_actualConflicts.Count > 0)
+        {
+            var conflicts = _syntaxGrammar.ExpectedConflicts
+                .Where(c => _actualConflicts.Remove(ConflictKey(c)))
+                .Select(c => c.Select(SymbolName).ToList())
+                .ToList();
+            conflicts.Sort((a, b) =>
+            {
+                for (var k = 0; k < Math.Min(a.Count, b.Count); k++)
+                {
+                    var c = string.CompareOrdinal(a[k], b[k]);
+                    if (c != 0)
+                    {
+                        return c;
+                    }
+                }
+
+                return a.Count.CompareTo(b.Count);
+            });
+            Warnings.Add("unnecessary conflicts:\n" + string.Join("\n", conflicts.Select(c => "  " + string.Join(", ", c.Select(name => "`" + name + "`")))));
+        }
+
         return _parseTable;
     }
 
