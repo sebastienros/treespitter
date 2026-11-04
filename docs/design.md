@@ -175,6 +175,11 @@ The hot paths don't allocate. Measured optimizations, in the order of their gain
    integer comparison. Keywords that are prefixes of other keywords still run the automaton. The gain is 1 to 3%: the
    automaton already stops after a few bytes for most identifiers.
 
+The 46 methods marked `[MethodImpl(MethodImplOptions.AggressiveInlining)]` (the table lookups, the accessors of the
+arena and the stack, the UTF-8 decoding, the lexer transitions) are worth it: without the attribute, the parses of the
+generated parsers are 1 to 3% slower on 8 grammars, and the incremental parses up to 6.5% (Go and Java). The JIT inlines
+the smallest ones anyway; none was measured to be harmful, each one's effect being below the noise of the benchmarks.
+
 The grammars with many ambiguities and the error recovery have their own costs:
 
 - When two versions of the stack meet, `select_tree` compares their trees (`ts_subtree_compare`) down to the leaves while
@@ -188,12 +193,15 @@ The grammars with many ambiguities and the error recovery have their own costs:
 ## Source generation
 
 `CodeGen/CSharpGenerator` writes a partial class with the serialized tables (a `byte[]` in the assembly), a `Language`
-property and a lex function struct with the keyword switches. The lexer automata are compiled to C# (a `switch` on the state with a `switch` on the
-code point, `goto` transitions, like tree-sitter's `ts_lex`) when the method is small enough for the JIT to optimize it:
-past about 2000 basic blocks the JIT compiles it with MinOpts, so large automata (like C's main lexer) use the table
-lexer. `TreeSpitter.Generators` is a Roslyn incremental generator for the classes marked `[GeneratedLanguage("…/grammar.json")]`:
-it compiles the source of the library (without Jint) and reads the grammars from the `AdditionalFiles`.
-`TreeSpitter.Languages` uses it for JSON, Go, Java and C.
+property and a lex function struct with the keyword switches. The lexer automata are run by the table lexer, like the
+ones of the VM. They used to be compiled to C# (a `switch` on the state with a `switch` on the code point and `goto`
+transitions, like tree-sitter's `ts_lex`), which was not faster than the table lexer (its ASCII transitions are one
+array lookup, and its self-loops are vectorized), within 3% either way on the 13 grammars whose lexers the JIT
+optimized, and 22 to 30% slower for JavaScript, TypeScript and Rust, whose lexer methods were too large to be optimized
+(the JIT compiles the methods of more than about 2000 basic blocks with MinOpts). `TreeSpitter.Generators` is a Roslyn
+incremental generator for the classes marked `[GeneratedLanguage("…/grammar.json")]`: it compiles the source of the
+library (without Jint) and reads the grammars from the `AdditionalFiles`. `TreeSpitter.Languages` uses it for the 27
+grammars; a development build can generate only some of them (`TreeSpitterGrammars=json,go dotnet build`).
 
 ## Limitations
 

@@ -17,7 +17,7 @@ releases are `v*.*.*` tags, see [docs/release.md](docs/release.md).
   extras, byte offsets, points and S-expressions.
 - `Language.Save` and `Language.Load`: the binary format of the compiled tables.
 - `CSharpGenerator` and the `TreeSpitter.Generators` source generator: `[GeneratedLanguage("grammar.json")]` classes
-  get precompiled parsers, with the tables embedded and the lexer compiled to C#.
+  get precompiled parsers, with the tables embedded and the keywords matched by code.
 - `TreeSpitter.Languages`: precompiled parsers of the 27 grammars of TreeSitter.DotNet 1.3.0 (Agda, Bash, C, C++, C#, CSS,
   Embedded Template, Go, Haskell, HTML, Java, JavaScript, JSDoc, JSON, Julia, OCaml, OCaml type, PHP, Python, QL, Razor,
   Ruby, Rust, Scala, TSX, TypeScript, Verilog), with their external scanners ported to C#.

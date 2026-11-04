@@ -83,7 +83,7 @@ public sealed class LanguageTests
 
         Assert.Contains("namespace Demo", source);
         Assert.Contains("public static partial class JsonParser", source);
-        Assert.Contains("private static bool LexMain(global::TreeSpitter.Lexer lexer, int state)", source);
+        Assert.Contains("public bool Lex(global::TreeSpitter.Lexer lexer, int state) => _tables.Lex(lexer, state);", source);
         Assert.Contains("global::TreeSpitter.ILexFunction", source);
     }
 

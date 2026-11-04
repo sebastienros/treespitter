@@ -5,7 +5,7 @@
 TreeSpitter is a C# port of [tree-sitter](https://tree-sitter.github.io): `grammar.js` files are evaluated with
 [Jint](https://github.com/sebastienros/jint), compiled to LR(1) parse tables and lexer automata exactly like
 `tree-sitter generate` does, and run by a port of the tree-sitter GLR parser, error recovery included. Languages can
-also be precompiled by a source generator, with their lexer compiled to C#.
+also be precompiled by a source generator.
 
 ```
 grammar.js ──Jint──▶ grammar AST ──▶ parse tables + lexer automata (bytecode) ──▶ GLR virtual machine ──▶ syntax tree
@@ -142,7 +142,7 @@ using TreeSpitter.Languages;
 using var tree = Go.CreateParser().ParseFile("main.go");
 ```
 
-Their assembly is 6.9 MB for the 27 grammars (the deflated tables are 6.3 MB of it), the same on every platform: the
+Their assembly is 6.0 MB for the 27 grammars (the deflated tables are most of it), the same on every platform: the
 native libraries of TreeSitter.DotNet are 66 MB per platform.
 
 For your own grammars, add `TreeSpitter.Generators` and the `grammar.json` of the grammar (from `tree-sitter generate`, or
@@ -163,8 +163,8 @@ public static partial class MyLanguage;
 var tree = MyLanguage.CreateParser().Parse(source);
 ```
 
-The generated class embeds the tables (`Language.Save()`), loads them once (`Language.Load()`), and compiles the lexer
-automata to C# when they're small enough for the JIT to optimize them. `treespitter generate` writes the same source
+The generated class embeds the tables (`Language.Save()`), loads them once (`Language.Load()`), and matches the keywords
+with code. `treespitter generate` writes the same source
 to a file.
 
 A grammar with `externals` needs its external scanner (`src/scanner.c`) ported to an `IExternalScanner`: `Scan`,
