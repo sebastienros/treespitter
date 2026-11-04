@@ -1,0 +1,4 @@
+# Corpus tests that don't produce the expected tree yet (file: test name)
+# `case int when i < 5:` is a declaration pattern (`int when`) and an error with the tables of tree-sitter 0.27.1 (whose
+# generator shifts on a precedence tie with right associative reductions); the corpus and the native parser come from 0.26.
+statements: Switch statements
