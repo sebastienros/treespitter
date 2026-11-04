@@ -617,6 +617,12 @@ internal sealed class SubtreeArena
         {
             right = stack[--size];
             left = stack[--size];
+            if (left == right)
+            {
+                // A subtree shared by both trees (the versions of the stack share their prefixes) equals itself
+                continue;
+            }
+
             ref var l = ref Nodes[left];
             ref var r = ref Nodes[right];
             var result = l.Symbol < r.Symbol ? -1 : r.Symbol < l.Symbol ? 1 : l.ChildCount < r.ChildCount ? -1 : r.ChildCount < l.ChildCount ? 1 : 0;
