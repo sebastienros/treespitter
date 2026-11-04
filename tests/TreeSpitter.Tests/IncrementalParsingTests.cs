@@ -9,6 +9,16 @@ namespace TreeSpitter.Tests;
 /// </summary>
 public sealed class IncrementalParsingTests
 {
+    /// <summary>
+    /// The tests skipped by tree-sitter's corpus tests (<c>corpus_test.rs</c>), whose trees change with the edits: the
+    /// heredocs of tree-sitter-bash, whose scanner keeps the heredocs after the ones of its state, so the incremental
+    /// parses depend on the nodes they reuse (the native parser gives these trees too).
+    /// </summary>
+    private static readonly Dictionary<string, string[]> SkippedTests = new()
+    {
+        ["bash"] = ["Nested Heredocs", "Quoted Heredocs", "Heredocs with weird characters"],
+    };
+
     private const int TrialCount = 6;
     private const int MaxEditCount = 3;
 
@@ -26,7 +36,8 @@ public sealed class IncrementalParsingTests
     public void RandomEditsAndTheirUndoGiveTheTreesOfAFreshParse(string grammar)
     {
         var parser = Fixtures.Parser(grammar);
-        var tests = Testing.Corpus.Load(Fixtures.Corpus(grammar)).Where(t => !t.Skip).ToList();
+        var skipped = SkippedTests.TryGetValue(grammar, out var names) ? names : [];
+        var tests = Testing.Corpus.Load(Fixtures.Corpus(grammar)).Where(t => !t.Skip && !skipped.Contains(t.Name)).ToList();
         var failures = new List<string>();
         var sameAsFresh = 0;
         var editedParses = 0;
