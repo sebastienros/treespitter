@@ -174,6 +174,27 @@ public sealed class GeneratorTests
         Assert.Equal("(document (upper) (other))", Parse(language, "ABcd"));
     }
 
+    [Theory]
+    [InlineData("[[0-7]&&[4-9]]+", "4567", "3")]
+    [InlineData("[[0-9]--[4-7]]+", "01238", "5")]
+    [InlineData("[[0-7]~~[4-9]]+", "01289", "6")]
+    [InlineData("[[[0-5]--[2-4]]~~[[3-9]--[6-7]]]+", "013489", "5")]
+    [InlineData("[a-z&&[^aeiou]]+", "xyz", "a")]
+    [InlineData("[^a-z&&[^x]]+", "xA", "b")]
+    [InlineData("[--a]+", "-a-", "0")]
+    public void ClassesHaveTheSetOperationsOfRegexSyntax(string pattern, string matched, string unmatched)
+    {
+        // Like regex-syntax: && is an intersection, -- a difference and ~~ a symmetric difference of the unions around
+        // them, and the leading dashes of a class are literals
+        var language = Compile($$"""
+            document: $ => repeat($.word),
+            word: $ => new RustRegex('{{pattern}}'),
+            """);
+
+        Assert.Equal("(document (word))", Parse(language, matched));
+        Assert.Contains("ERROR", Parse(language, unmatched));
+    }
+
     [Fact]
     public void NonAsciiByteClassesAreRejected()
     {

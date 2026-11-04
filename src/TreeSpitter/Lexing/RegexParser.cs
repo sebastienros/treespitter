@@ -700,10 +700,24 @@ internal sealed class RegexParser
             _position++;
         }
 
-        // The code points and ranges, folded at the end, and the sets which are already folded (and negated)
+        // The code points and ranges, folded at the end of an operand, and the sets which are already folded (and
+        // negated)
         var leaves = CharSet.Empty;
         var set = CharSet.Empty;
+
+        // Like regex-syntax, the leading dashes are literals, and so is a leading ']'
         var first = true;
+        while (!AtEnd && Current == '-')
+        {
+            leaves = leaves.Union(CharSet.Single('-'));
+            first = false;
+            _position++;
+        }
+
+        // The set operations of regex-syntax (&& intersection, -- difference, ~~ symmetric difference) apply to the
+        // unions of the items around them, from left to right
+        CharSet? left = null;
+        var operation = '\0';
         while (true)
         {
             if (AtEnd)
@@ -720,6 +734,17 @@ internal sealed class RegexParser
             }
 
             first = false;
+
+            if (c is '&' or '-' or '~' && _position + 1 < _pattern.Length && _pattern[_position + 1] == c)
+            {
+                var operand = FoldLeaves(leaves).Union(set);
+                left = left is { } previous ? ApplySetOperation(operation, previous, operand) : operand;
+                operation = c;
+                leaves = CharSet.Empty;
+                set = CharSet.Empty;
+                _position += 2;
+                continue;
+            }
 
             if (c == '[')
             {
@@ -742,7 +767,8 @@ internal sealed class RegexParser
                 continue;
             }
 
-            if (!AtEnd && Current == '-' && _position + 1 < _pattern.Length && _pattern[_position + 1] != ']')
+            // A dash followed by ']' is a literal, and a dash followed by a dash is a difference
+            if (!AtEnd && Current == '-' && _position + 1 < _pattern.Length && _pattern[_position + 1] is not (']' or '-'))
             {
                 _position++;
                 var high = ParseClassAtom(out var highSet);
@@ -767,14 +793,24 @@ internal sealed class RegexParser
             }
         }
 
-        if (_ignoreCase)
+        set = FoldLeaves(leaves).Union(set);
+        if (left is { } lhs)
         {
-            leaves = leaves.CaseFold();
+            set = ApplySetOperation(operation, lhs, set);
         }
 
-        set = set.Union(leaves);
         return negated ? set.Negate() : set;
     }
+
+    private CharSet FoldLeaves(CharSet leaves) => _ignoreCase ? leaves.CaseFold() : leaves;
+
+    /// <summary>The set operations of the classes of regex-syntax: <c>&amp;&amp;</c>, <c>--</c> and <c>~~</c>.</summary>
+    private static CharSet ApplySetOperation(char operation, CharSet left, CharSet right) => operation switch
+    {
+        '&' => left.Intersect(right),
+        '-' => left.Intersect(right.Negate()),
+        _ => left.Union(right).Intersect(left.Intersect(right).Negate()),
+    };
 
     private int ParseClassAtom(out CharSet? set)
     {
