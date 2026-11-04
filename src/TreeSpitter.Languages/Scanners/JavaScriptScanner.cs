@@ -167,7 +167,10 @@ public sealed class JavaScriptScanner : IExternalScanner
                 return true;
             }
 
-            // lexer->is_at_included_range_start(lexer) is always false: there are no included ranges
+            if (lexer.IsAtIncludedRangeStart)
+            {
+                return true;
+            }
 
             if (lexer.Lookahead == '\n' || lexer.Lookahead == 0x2028 || lexer.Lookahead == 0x2029)
             {
