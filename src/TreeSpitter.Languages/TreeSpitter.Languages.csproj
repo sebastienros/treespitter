@@ -3,8 +3,8 @@
     <TargetFramework></TargetFramework>
     <TargetFrameworks>netstandard2.0;net10.0</TargetFrameworks>
     <IsPackable>true</IsPackable>
-    <Description>Precompiled TreeSpitter parsers of the tree-sitter grammars of JSON, Go, Java and C: the tables are compiled at build time and the lexers are C# code.</Description>
-    <PackageTags>tree-sitter;parser;json;go;java;c</PackageTags>
+    <Description>Precompiled TreeSpitter parsers of 27 tree-sitter grammars (Agda, Bash, C, C++, C#, CSS, Embedded Template, Go, Haskell, HTML, Java, JavaScript, JSDoc, JSON, Julia, OCaml, PHP, Python, QL, Razor, Ruby, Rust, Scala, TSX, TypeScript, Verilog), with their external scanners ported to C#: the tables are compiled at build time.</Description>
+    <PackageTags>tree-sitter;parser;agda;bash;c;cpp;csharp;css;go;haskell;html;java;javascript;jsdoc;json;julia;ocaml;php;python;ql;razor;ruby;rust;scala;typescript;verilog</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
