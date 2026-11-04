@@ -221,7 +221,7 @@ internal sealed class ProductionStep : IEquatable<ProductionStep>, IComparable<P
             return right.HasValue ? -1 : 0;
         }
 
-        return !right.HasValue ? 1 : left.Value.CompareTo(right.Value);
+        return !right.HasValue ? 1 : ((byte)left.Value).CompareTo((byte)right.Value);
     }
 
     public static int CompareField(string? left, string? right)

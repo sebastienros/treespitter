@@ -28,20 +28,206 @@ internal sealed class ParseTableBuilder
 
     private sealed record AuxiliarySymbolInfo(Symbol AuxiliarySymbol, List<Symbol> ParentSymbols);
 
-    private readonly record struct QueueEntry(int StateId, List<AuxiliarySymbolInfo> PrecedingAuxiliarySymbols);
+    /// <summary>
+    /// A sequence of symbols, tree-sitter's <c>SymbolSequence</c>, as an immutable list linked from its last symbol: the
+    /// sequences of the states extend the sequence of the state they come from, and are shared instead of copied.
+    /// </summary>
+    private sealed class SymbolSequence(Symbol last, SymbolSequence? previous)
+    {
+        public Symbol Last { get; } = last;
+
+        public SymbolSequence? Previous { get; } = previous;
+
+        public static List<Symbol> ToList(SymbolSequence? sequence)
+        {
+            var list = new List<Symbol>();
+            for (var s = sequence; s is not null; s = s.Previous)
+            {
+                list.Add(s.Last);
+            }
+
+            list.Reverse();
+            return list;
+        }
+    }
+
+    /// <summary>
+    /// A sequence of auxiliary symbol infos, tree-sitter's <c>AuxiliarySymbolSequence</c>, as an immutable list linked
+    /// from its last info, shared like <see cref="SymbolSequence"/>.
+    /// </summary>
+    private sealed class AuxiliarySymbolSequence(AuxiliarySymbolInfo last, AuxiliarySymbolSequence? previous)
+    {
+        public AuxiliarySymbolInfo Last { get; } = last;
+
+        public AuxiliarySymbolSequence? Previous { get; } = previous;
+    }
+
+    private readonly record struct QueueEntry(int StateId, AuxiliarySymbolSequence? PrecedingAuxiliarySymbols);
+
+    /// <summary>
+    /// The key of an item set in the dictionary of the states: for each entry, the id of the class of its item (the items
+    /// equal by <see cref="ParseItem.Equals(ParseItem)"/>) and its reserved word set, then the bits of its lookaheads,
+    /// packed in an array. Two item sets are equal if and only if their keys are: comparing the keys reads an array
+    /// instead of the objects of an item set, and the successor item sets of the large grammars are looked up millions of
+    /// times.
+    /// </summary>
+    private sealed class ItemSetKey(ulong[] words, int length, int hash)
+    {
+        public ulong[] Words { get; set; } = words;
+
+        public int Length { get; set; } = length;
+
+        public int Hash { get; set; } = hash;
+
+        public ItemSetKey Copy() => new(Words.AsSpan(0, Length).ToArray(), Length, Hash);
+    }
+
+    /// <summary>
+    /// A map of the symbols of a grammar to values, in arrays indexed by symbol: the maps of the successor item sets and of
+    /// the reductions of a state, cleared for every state. The symbols are indexed in their order (externals, end, end of
+    /// non-terminal extra, terminals, non-terminals) so that the keys are sorted as numbers.
+    /// </summary>
+    private sealed class SymbolMap<T>
+        where T : class
+    {
+        private readonly Symbol[] _symbols;
+        private readonly T?[] _values;
+        private readonly List<int> _indices = [];
+        private readonly List<Symbol> _sortedKeys = [];
+        private readonly int _endIndex;
+        private readonly int _terminalOffset;
+        private readonly int _nonTerminalOffset;
+
+        public SymbolMap(int terminalCount, int externalCount, int nonTerminalCount)
+        {
+            _endIndex = externalCount;
+            _terminalOffset = externalCount + 2;
+            _nonTerminalOffset = _terminalOffset + terminalCount;
+            _symbols = new Symbol[_nonTerminalOffset + nonTerminalCount];
+            _values = new T?[_symbols.Length];
+            for (var i = 0; i < externalCount; i++)
+            {
+                _symbols[i] = Symbol.External(i);
+            }
+
+            _symbols[_endIndex] = Symbol.End;
+            _symbols[_endIndex + 1] = Symbol.EndOfNonTerminalExtra;
+            for (var i = 0; i < terminalCount; i++)
+            {
+                _symbols[_terminalOffset + i] = Symbol.Terminal(i);
+            }
+
+            for (var i = 0; i < nonTerminalCount; i++)
+            {
+                _symbols[_nonTerminalOffset + i] = Symbol.NonTerminal(i);
+            }
+        }
+
+        public int Count => _indices.Count;
+
+        public T this[Symbol symbol]
+        {
+            get => _values[Index(symbol)] ?? throw new KeyNotFoundException();
+            set
+            {
+                var index = Index(symbol);
+                if (_values[index] is null)
+                {
+                    _indices.Add(index);
+                }
+
+                _values[index] = value;
+            }
+        }
+
+        public bool TryGetValue(Symbol symbol, out T value)
+        {
+            value = _values[Index(symbol)]!;
+            return value is not null;
+        }
+
+        /// <summary>The symbols of the map, sorted (valid until the next call).</summary>
+        public List<Symbol> SortedKeys()
+        {
+            _indices.Sort();
+            _sortedKeys.Clear();
+            foreach (var index in _indices)
+            {
+                _sortedKeys.Add(_symbols[index]);
+            }
+
+            return _sortedKeys;
+        }
+
+        public void Clear()
+        {
+            foreach (var index in _indices)
+            {
+                _values[index] = null;
+            }
+
+            _indices.Clear();
+        }
+
+        private int Index(Symbol symbol) => symbol.Kind switch
+        {
+            SymbolType.Terminal => _terminalOffset + symbol.Index,
+            SymbolType.NonTerminal => _nonTerminalOffset + symbol.Index,
+            SymbolType.External => symbol.Index,
+            SymbolType.End => _endIndex,
+            _ => _endIndex + 1,
+        };
+    }
+
+    /// <summary>Compares the items by their fields, the productions by reference: the same items are equal items.</summary>
+    private sealed class ItemIdentityComparer : IEqualityComparer<ParseItem>
+    {
+        public static readonly ItemIdentityComparer Instance = new();
+
+        public bool Equals(ParseItem x, ParseItem y) =>
+            x.VariableIndex == y.VariableIndex && x.StepIndex == y.StepIndex && x.HasPrecedingInheritedFields == y.HasPrecedingInheritedFields && ReferenceEquals(x.Production, y.Production);
+
+        public int GetHashCode(ParseItem obj) =>
+            (((System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj.Production) * 31) + obj.StepIndex) * 31 + obj.VariableIndex) * 2 + (obj.HasPrecedingInheritedFields ? 1 : 0);
+    }
+
+    private sealed class ItemSetKeyComparer : IEqualityComparer<ItemSetKey>
+    {
+        public static readonly ItemSetKeyComparer Instance = new();
+
+        public bool Equals(ItemSetKey? x, ItemSetKey? y) =>
+            x is not null && y is not null && x.Length == y.Length && x.Words.AsSpan(0, x.Length).SequenceEqual(y.Words.AsSpan(0, y.Length));
+
+        public int GetHashCode(ItemSetKey obj) => obj.Hash;
+    }
 
     private readonly ParseItemSetBuilder _itemSetBuilder;
     private readonly SyntaxGrammar _syntaxGrammar;
     private readonly LexicalGrammar _lexicalGrammar;
     private readonly List<VariableInfo> _variableInfo;
     private readonly Dictionary<ParseItemSetCore, int> _coreIdsByCore = [];
-    private readonly Dictionary<ParseItemSet, int> _stateIdsByItemSet = [];
-    private readonly List<(List<Symbol> PrecedingSymbols, ParseItemSet ItemSet)> _parseStateInfoById = [];
+    private readonly Dictionary<ItemSetKey, int> _stateIdsByItemSet = new(ItemSetKeyComparer.Instance);
+    private readonly Dictionary<ParseItem, int> _itemClassIds = [];
+    private readonly Dictionary<ParseItem, int> _itemClassIdsByIdentity = new(ItemIdentityComparer.Instance);
+    private readonly ItemSetKey _probe = new([], 0, 0);
+    private readonly int _terminalWords;
+    private readonly int _externalWords;
+    private readonly List<(SymbolSequence? PrecedingSymbols, ParseItemSet ItemSet)> _parseStateInfoById = [];
     private readonly Queue<QueueEntry> _parseStateQueue = new();
     private readonly List<(Symbol Terminal, int StateId)> _nonTerminalExtraStates = [];
     private readonly HashSet<string> _actualConflicts;
     private readonly ParseTable _parseTable = new();
     private readonly Dictionary<ProductionInfo, int> _productionInfoIds = [];
+    private readonly Dictionary<Production, int> _productionIdsByProduction = []; // by reference
+
+    // The per-state collections of AddActions, reused
+    private readonly SymbolMap<ParseItemSet> _terminalSuccessors;
+    private readonly SymbolMap<ParseItemSet> _nonTerminalSuccessors;
+    private readonly SymbolMap<ReductionInfo> _reductionInfos;
+    private readonly List<ReductionInfo> _reductionInfoPool = [];
+    private readonly Dictionary<Symbol, AuxiliarySymbolInfo> _auxiliaryNodeInfos = [];
+    private readonly TokenSet _terminals = new();
+    private readonly int _nonTerminalExtraCount;
 
     public ParseTableBuilder(SyntaxGrammar syntaxGrammar, LexicalGrammar lexicalGrammar, ParseItemSetBuilder itemSetBuilder, List<VariableInfo> variableInfo)
     {
@@ -50,6 +236,13 @@ internal sealed class ParseTableBuilder
         _itemSetBuilder = itemSetBuilder;
         _variableInfo = variableInfo;
         _actualConflicts = new HashSet<string>(syntaxGrammar.ExpectedConflicts.Select(ConflictKey), StringComparer.Ordinal);
+        _nonTerminalExtraCount = syntaxGrammar.ExtraSymbols.Count(s => s.IsNonTerminal);
+        var (terminalCount, externalCount, nonTerminalCount) = (lexicalGrammar.Variables.Count, syntaxGrammar.ExternalTokens.Count, syntaxGrammar.Variables.Count);
+        _terminalSuccessors = new(terminalCount, externalCount, nonTerminalCount);
+        _nonTerminalSuccessors = new(terminalCount, externalCount, nonTerminalCount);
+        _reductionInfos = new(terminalCount, externalCount, nonTerminalCount);
+        _terminalWords = (lexicalGrammar.Variables.Count + 63) >> 6;
+        _externalWords = (syntaxGrammar.ExternalTokens.Count + 63) >> 6;
     }
 
     public List<string> Warnings { get; } = [];
@@ -62,10 +255,10 @@ internal sealed class ParseTableBuilder
         AddProductionInfo(new ProductionInfo());
 
         // The error state is 0, the start state is 1
-        AddParseState([], [], new ParseItemSet());
+        AddParseState(null, null, new ParseItemSet());
         var start = new ParseItemSet();
         start.Insert(ParseItem.Start()).Lookaheads.Insert(Symbol.End);
-        AddParseState([], [], start);
+        AddParseState(null, null, start);
 
         // The item sets of the non-terminal extras, by their first terminal
         var nonTerminalExtraItemSets = new SortedDictionary<Symbol, ParseItemSet>();
@@ -92,7 +285,7 @@ internal sealed class ParseTableBuilder
                 throw new GrammarException($"The non-terminal rule `{SymbolName(terminal)}` is used in a non-terminal `extra` rule, which is not allowed.");
             }
 
-            var stateId = AddParseState([], [], itemSet);
+            var stateId = AddParseState(null, null, itemSet);
             _nonTerminalExtraStates.Add((terminal, stateId));
         }
 
@@ -100,7 +293,8 @@ internal sealed class ParseTableBuilder
         {
             var entry = _parseStateQueue.Dequeue();
             var itemSet = _itemSetBuilder.TransitiveClosure(_parseStateInfoById[entry.StateId].ItemSet);
-            AddActions([.. _parseStateInfoById[entry.StateId].PrecedingSymbols], entry.PrecedingAuxiliarySymbols, entry.StateId, itemSet);
+            AddActions(_parseStateInfoById[entry.StateId].PrecedingSymbols, entry.PrecedingAuxiliarySymbols, entry.StateId, itemSet);
+            _itemSetBuilder.Pool.Return(itemSet);
         }
 
         // The declared conflicts which didn't occur, sorted like tree-sitter 0.27
@@ -129,13 +323,59 @@ internal sealed class ParseTableBuilder
         return _parseTable;
     }
 
-    private int AddParseState(List<Symbol> precedingSymbols, List<AuxiliarySymbolInfo> precedingAuxiliarySymbols, ParseItemSet itemSet)
+    private int AddParseState(SymbolSequence? precedingSymbols, AuxiliarySymbolSequence? precedingAuxiliarySymbols, ParseItemSet itemSet)
     {
-        if (_stateIdsByItemSet.TryGetValue(itemSet, out var existing))
+        var key = Key(itemSet);
+        return _stateIdsByItemSet.TryGetValue(key, out var existing) ? existing : AddNewParseState(precedingSymbols, precedingAuxiliarySymbols, itemSet, key);
+    }
+
+    /// <summary>The key of an item set, in the probe key (valid until the next call).</summary>
+    private ItemSetKey Key(ParseItemSet itemSet)
+    {
+        var stride = 1 + _terminalWords + _externalWords + 1;
+        var length = itemSet.Entries.Count * stride;
+        if (_probe.Words.Length < length)
         {
-            return existing;
+            _probe.Words = new ulong[Math.Max(length, _probe.Words.Length * 2)];
         }
 
+        var words = _probe.Words;
+        var offset = 0;
+        foreach (var entry in itemSet.Entries)
+        {
+            if (!_itemClassIdsByIdentity.TryGetValue(entry.Item, out var classId))
+            {
+                if (!_itemClassIds.TryGetValue(entry.Item, out classId))
+                {
+                    classId = _itemClassIds.Count;
+                    _itemClassIds[entry.Item] = classId;
+                }
+
+                _itemClassIdsByIdentity[entry.Item] = classId;
+            }
+
+            words[offset] = ((ulong)(uint)classId << 32) | (uint)entry.FollowingReservedWordSet;
+            entry.Lookaheads.CopyBits(words, offset + 1, _terminalWords, _externalWords);
+            offset += stride;
+        }
+
+        unchecked
+        {
+            var hash = length;
+            for (var i = 0; i < length; i++)
+            {
+                hash = (hash * 31) + words[i].GetHashCode();
+            }
+
+            _probe.Length = length;
+            _probe.Hash = hash;
+        }
+
+        return _probe;
+    }
+
+    private int AddNewParseState(SymbolSequence? precedingSymbols, AuxiliarySymbolSequence? precedingAuxiliarySymbols, ParseItemSet itemSet, ItemSetKey key)
+    {
         var core = itemSet.Core();
         if (!_coreIdsByCore.TryGetValue(core, out var coreId))
         {
@@ -144,20 +384,63 @@ internal sealed class ParseTableBuilder
         }
 
         var stateId = _parseTable.States.Count;
-        _parseStateInfoById.Add(([.. precedingSymbols], itemSet));
+        _parseStateInfoById.Add((precedingSymbols, itemSet));
         _parseTable.States.Add(new ParseState { Id = stateId, CoreId = coreId });
-        _parseStateQueue.Enqueue(new QueueEntry(stateId, [.. precedingAuxiliarySymbols]));
-        _stateIdsByItemSet[itemSet] = stateId;
+        _parseStateQueue.Enqueue(new QueueEntry(stateId, precedingAuxiliarySymbols));
+        _stateIdsByItemSet[key.Copy()] = stateId;
         return stateId;
     }
 
-    private void AddActions(List<Symbol> precedingSymbols, List<AuxiliarySymbolInfo> precedingAuxiliarySymbols, int stateId, ParseItemSet itemSet)
+    private void AddActions(SymbolSequence? precedingSymbols, AuxiliarySymbolSequence? precedingAuxiliarySymbols, int stateId, ParseItemSet itemSet)
     {
-        var terminalSuccessors = new SortedDictionary<Symbol, ParseItemSet>();
-        var nonTerminalSuccessors = new SortedDictionary<Symbol, ParseItemSet>();
+        // The successors are visited by symbol, like the BTreeMaps of tree-sitter
+        var terminalSuccessors = _terminalSuccessors;
+        var nonTerminalSuccessors = _nonTerminalSuccessors;
+        terminalSuccessors.Clear();
+        nonTerminalSuccessors.Clear();
+        _auxiliaryNodeInfos.Clear();
         var lookaheadsWithConflicts = new TokenSet();
-        var reductionInfos = new Dictionary<Symbol, ReductionInfo>();
+        var reductionInfos = _reductionInfos;
+        reductionInfos.Clear();
+        var reductionInfoCount = 0;
         var state = _parseTable.States[stateId];
+
+        // The parse tables of the large grammars have millions of entries: the terminal entries are allocated at their
+        // size, the terminals of the shifts, reductions and extras
+        var terminals = _terminals;
+        terminals.Clear();
+        foreach (var entry in itemSet.Entries)
+        {
+            if (entry.Item.NextSymbol is { } next)
+            {
+                if (!next.IsNonTerminal)
+                {
+                    terminals.Insert(next);
+                }
+            }
+            else
+            {
+                terminals.InsertAll(entry.Lookaheads);
+            }
+        }
+
+        if (!terminals.Contains(Symbol.EndOfNonTerminalExtra))
+        {
+            foreach (var (terminal, _) in _nonTerminalExtraStates)
+            {
+                terminals.Insert(terminal);
+            }
+
+            foreach (var extraToken in _syntaxGrammar.ExtraSymbols)
+            {
+                if (!extraToken.IsNonTerminal)
+                {
+                    terminals.Insert(extraToken);
+                }
+            }
+        }
+
+        state.TerminalEntries.EnsureCapacity(terminals.Count);
 
         foreach (var entry in itemSet.Entries)
         {
@@ -171,7 +454,18 @@ internal sealed class ParseTableBuilder
                     var variable = _syntaxGrammar.Variables[nextSymbol.Index];
                     if (variable.IsAuxiliary)
                     {
-                        precedingAuxiliarySymbols.Add(GetAuxiliaryNodeInfo(itemSet, nextSymbol));
+                        // Vec::dedup of tree-sitter after the loop: only consecutive duplicates (the preceding infos
+                        // are deduplicated already)
+                        if (!_auxiliaryNodeInfos.TryGetValue(nextSymbol, out var info))
+                        {
+                            info = GetAuxiliaryNodeInfo(itemSet, nextSymbol);
+                            _auxiliaryNodeInfos[nextSymbol] = info;
+                        }
+
+                        if (precedingAuxiliarySymbols is null || !SameAuxiliarySymbolInfo(precedingAuxiliarySymbols.Last, info))
+                        {
+                            precedingAuxiliarySymbols = new AuxiliarySymbolSequence(info, precedingAuxiliarySymbols);
+                        }
                     }
 
                     if (variable.IsHidden && _variableInfo[nextSymbol.Index].Fields.Count > 0)
@@ -181,13 +475,13 @@ internal sealed class ParseTableBuilder
 
                     if (!nonTerminalSuccessors.TryGetValue(nextSymbol, out successorSet!))
                     {
-                        successorSet = new ParseItemSet();
+                        successorSet = _itemSetBuilder.Pool.RentSet();
                         nonTerminalSuccessors[nextSymbol] = successorSet;
                     }
                 }
                 else if (!terminalSuccessors.TryGetValue(nextSymbol, out successorSet!))
                 {
-                    successorSet = new ParseItemSet();
+                    successorSet = _itemSetBuilder.Pool.RentSet();
                     terminalSuccessors[nextSymbol] = successorSet;
                 }
 
@@ -208,7 +502,13 @@ internal sealed class ParseTableBuilder
                     var tableEntry = state.TerminalEntries.GetOrAdd(lookahead, () => new ParseTableEntry());
                     if (!reductionInfos.TryGetValue(lookahead, out var reductionInfo))
                     {
-                        reductionInfo = new ReductionInfo();
+                        if (reductionInfoCount == _reductionInfoPool.Count)
+                        {
+                            _reductionInfoPool.Add(new ReductionInfo());
+                        }
+
+                        reductionInfo = _reductionInfoPool[reductionInfoCount++];
+                        reductionInfo.Reset();
                         reductionInfos[lookahead] = reductionInfo;
                     }
 
@@ -218,7 +518,7 @@ internal sealed class ParseTableBuilder
                     }
                     else
                     {
-                        var comparison = ComparePrecedence(_syntaxGrammar, precedence, [symbol], reductionInfo.Precedence, reductionInfo.Symbols);
+                        var comparison = ComparePrecedence(_syntaxGrammar, precedence, symbol, reductionInfo.Precedence, reductionInfo.Symbols);
                         if (comparison > 0)
                         {
                             tableEntry.Actions.Clear();
@@ -264,21 +564,10 @@ internal sealed class ParseTableBuilder
             }
         }
 
-        // Vec::dedup: only consecutive duplicates
-        for (var i = precedingAuxiliarySymbols.Count - 1; i > 0; i--)
+        state.NonTerminalEntries.EnsureCapacity(nonTerminalSuccessors.Count + _nonTerminalExtraCount);
+        foreach (var symbol in terminalSuccessors.SortedKeys())
         {
-            if (precedingAuxiliarySymbols[i].AuxiliarySymbol == precedingAuxiliarySymbols[i - 1].AuxiliarySymbol &&
-                precedingAuxiliarySymbols[i].ParentSymbols.SequenceEqual(precedingAuxiliarySymbols[i - 1].ParentSymbols))
-            {
-                precedingAuxiliarySymbols.RemoveAt(i);
-            }
-        }
-
-        foreach (var (symbol, nextItemSet) in terminalSuccessors)
-        {
-            precedingSymbols.Add(symbol);
-            var nextStateId = AddParseState(precedingSymbols, precedingAuxiliarySymbols, nextItemSet);
-            precedingSymbols.RemoveAt(precedingSymbols.Count - 1);
+            var nextStateId = AddSuccessorState(symbol, precedingSymbols, precedingAuxiliarySymbols, terminalSuccessors[symbol]);
             if (state.TerminalEntries.TryGetValue(symbol, out var existing) && existing.Actions.Count > 0)
             {
                 lookaheadsWithConflicts.Insert(symbol);
@@ -287,11 +576,9 @@ internal sealed class ParseTableBuilder
             state.TerminalEntries.GetOrAdd(symbol, () => new ParseTableEntry()).Actions.Add(ParseAction.Shift(nextStateId, false));
         }
 
-        foreach (var (symbol, nextItemSet) in nonTerminalSuccessors)
+        foreach (var symbol in nonTerminalSuccessors.SortedKeys())
         {
-            precedingSymbols.Add(symbol);
-            var nextStateId = AddParseState(precedingSymbols, precedingAuxiliarySymbols, nextItemSet);
-            precedingSymbols.RemoveAt(precedingSymbols.Count - 1);
+            var nextStateId = AddSuccessorState(symbol, precedingSymbols, precedingAuxiliarySymbols, nonTerminalSuccessors[symbol]);
             state.NonTerminalEntries[symbol] = new GotoAction(nextStateId);
         }
 
@@ -315,7 +602,7 @@ internal sealed class ParseTableBuilder
             {
                 if (!state.TerminalEntries.ContainsKey(terminal))
                 {
-                    state.TerminalEntries[terminal] = new ParseTableEntry { Reusable = true, Actions = [ParseAction.Shift(extraStateId, false)] };
+                    state.TerminalEntries[terminal] = new ParseTableEntry(ParseAction.Shift(extraStateId, false)) { Reusable = true };
                 }
             }
 
@@ -327,7 +614,7 @@ internal sealed class ParseTableBuilder
                 }
                 else if (!state.TerminalEntries.ContainsKey(extraToken))
                 {
-                    state.TerminalEntries[extraToken] = new ParseTableEntry { Reusable = true, Actions = [ParseAction.ShiftExtra] };
+                    state.TerminalEntries[extraToken] = new ParseTableEntry(ParseAction.ShiftExtra) { Reusable = true };
                 }
             }
         }
@@ -358,12 +645,32 @@ internal sealed class ParseTableBuilder
 
             if (reservedWordSetId is { } setId && setId < _syntaxGrammar.ReservedWordSets.Count)
             {
-                state.ReservedWords = _syntaxGrammar.ReservedWordSets[setId].Clone();
+                // Shared by the states: the minimization copies it before changing it
+                state.ReservedWords = _syntaxGrammar.ReservedWordSets[setId];
             }
         }
     }
 
-    private void HandleConflict(ParseItemSet itemSet, int stateId, List<Symbol> precedingSymbols, List<AuxiliarySymbolInfo> precedingAuxiliarySymbols, Symbol conflictingLookahead, ReductionInfo reductionInfo)
+    /// <summary>
+    /// Adds the state of the successor item set of a symbol, recycling the item set when the state exists (the preceding
+    /// symbols of a new state are the preceding symbols of the state and the symbol).
+    /// </summary>
+    private int AddSuccessorState(Symbol symbol, SymbolSequence? precedingSymbols, AuxiliarySymbolSequence? precedingAuxiliarySymbols, ParseItemSet itemSet)
+    {
+        var key = Key(itemSet);
+        if (_stateIdsByItemSet.TryGetValue(key, out var existing))
+        {
+            _itemSetBuilder.Pool.Return(itemSet);
+            return existing;
+        }
+
+        return AddNewParseState(new SymbolSequence(symbol, precedingSymbols), precedingAuxiliarySymbols, itemSet, key);
+    }
+
+    private static bool SameAuxiliarySymbolInfo(AuxiliarySymbolInfo left, AuxiliarySymbolInfo right) =>
+        left.AuxiliarySymbol == right.AuxiliarySymbol && left.ParentSymbols.SequenceEqual(right.ParentSymbols);
+
+    private void HandleConflict(ParseItemSet itemSet, int stateId, SymbolSequence? precedingSymbolSequence, AuxiliarySymbolSequence? precedingAuxiliarySymbols, Symbol conflictingLookahead, ReductionInfo reductionInfo)
     {
         var entry = _parseTable.States[stateId].TerminalEntries[conflictingLookahead];
 
@@ -383,7 +690,16 @@ internal sealed class ParseTableBuilder
                     }
 
                     (Precedence Precedence, Symbol Symbol) p = (item.Precedence, Symbol.NonTerminal(item.VariableIndex));
-                    var index = shiftPrecedence.FindIndex(x => x.Precedence.CompareTo(p.Precedence) == 0 && x.Symbol == p.Symbol);
+                    var index = -1;
+                    for (var i = 0; i < shiftPrecedence.Count; i++)
+                    {
+                        if (shiftPrecedence[i].Precedence.CompareTo(p.Precedence) == 0 && shiftPrecedence[i].Symbol == p.Symbol)
+                        {
+                            index = i;
+                            break;
+                        }
+                    }
+
                     if (index < 0)
                     {
                         shiftPrecedence.Add(p);
@@ -417,7 +733,7 @@ internal sealed class ParseTableBuilder
             var shiftIsMore = false;
             foreach (var p in shiftPrecedence)
             {
-                var comparison = ComparePrecedence(_syntaxGrammar, p.Precedence, [p.Symbol], reductionInfo.Precedence, reductionInfo.Symbols);
+                var comparison = ComparePrecedence(_syntaxGrammar, p.Precedence, p.Symbol, reductionInfo.Precedence, reductionInfo.Symbols);
                 if (comparison > 0)
                 {
                     shiftIsMore = true;
@@ -477,11 +793,11 @@ internal sealed class ParseTableBuilder
             if (_syntaxGrammar.Variables[symbol.Index].IsAuxiliary)
             {
                 AuxiliarySymbolInfo? info = null;
-                for (var i = precedingAuxiliarySymbols.Count - 1; i >= 0; i--)
+                for (var s = precedingAuxiliarySymbols; s is not null; s = s.Previous)
                 {
-                    if (precedingAuxiliarySymbols[i].AuxiliarySymbol == symbol)
+                    if (s.Last.AuxiliarySymbol == symbol)
                     {
-                        info = precedingAuxiliarySymbols[i];
+                        info = s.Last;
                         break;
                     }
                 }
@@ -506,6 +822,7 @@ internal sealed class ParseTableBuilder
             return;
         }
 
+        var precedingSymbols = SymbolSequence.ToList(precedingSymbolSequence);
         var message = new StringBuilder();
         message.Append("Unresolved conflict for symbol sequence:\n\n");
         foreach (var symbol in precedingSymbols)
@@ -559,7 +876,8 @@ internal sealed class ParseTableBuilder
         throw new GrammarException(message.ToString());
     }
 
-    public static int ComparePrecedence(SyntaxGrammar grammar, Precedence left, IReadOnlyList<Symbol> leftSymbols, Precedence right, IReadOnlyList<Symbol> rightSymbols)
+    /// <summary>tree-sitter's <c>compare_precedence</c>, for the single symbol of an item on the left.</summary>
+    public static int ComparePrecedence(SyntaxGrammar grammar, Precedence left, Symbol leftSymbol, Precedence right, List<Symbol> rightSymbols)
     {
         if (left.Kind == PrecedenceValueKind.Integer && right.Kind == PrecedenceValueKind.Integer && (left.Value != 0 || right.Value != 0))
         {
@@ -576,7 +894,10 @@ internal sealed class ParseTableBuilder
             return 0.CompareTo(right.Value);
         }
 
-        bool Matches(PrecedenceEntry entry, Precedence precedence, IReadOnlyList<Symbol> symbols)
+        bool MatchesSymbol(PrecedenceEntry entry, Symbol s) =>
+            s.Index >= 0 && s.Index < grammar.Variables.Count && grammar.Variables[s.Index].Name == entry.Value;
+
+        bool Matches(PrecedenceEntry entry, Precedence precedence, List<Symbol> symbols)
         {
             if (!entry.IsSymbol)
             {
@@ -585,7 +906,7 @@ internal sealed class ParseTableBuilder
 
             foreach (var s in symbols)
             {
-                if (s.Index >= 0 && s.Index < grammar.Variables.Count && grammar.Variables[s.Index].Name == entry.Value)
+                if (MatchesSymbol(entry, s))
                 {
                     return true;
                 }
@@ -600,7 +921,9 @@ internal sealed class ParseTableBuilder
             var sawRight = false;
             foreach (var entry in list)
             {
-                var matchesLeft = Matches(entry, left, leftSymbols);
+                var matchesLeft = entry.IsSymbol
+                    ? MatchesSymbol(entry, leftSymbol)
+                    : left.Kind == PrecedenceValueKind.Name && left.Name == entry.Value;
                 var matchesRight = Matches(entry, right, rightSymbols);
                 if (matchesLeft)
                 {
@@ -640,6 +963,19 @@ internal sealed class ParseTableBuilder
     }
 
     private int GetProductionId(ParseItem item)
+    {
+        // The id depends only on the steps of the production
+        if (_productionIdsByProduction.TryGetValue(item.Production, out var id))
+        {
+            return id;
+        }
+
+        id = ComputeProductionId(item);
+        _productionIdsByProduction[item.Production] = id;
+        return id;
+    }
+
+    private int ComputeProductionId(ParseItem item)
     {
         var info = new ProductionInfo();
         for (var i = 0; i < item.Production.Steps.Count; i++)
