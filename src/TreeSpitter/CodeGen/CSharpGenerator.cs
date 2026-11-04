@@ -97,7 +97,33 @@ public static class CSharpGenerator
         writer.Line(compileKeywords
             ? "public bool LexKeyword(global::TreeSpitter.Lexer lexer, int state) => LexKeywords(lexer, state);"
             : "public bool LexKeyword(global::TreeSpitter.Lexer lexer, int state) => _tables.LexKeyword(lexer, state);");
+        writer.Line();
+        var keywords = language.Keywords;
+        writer.Line(keywords is not null
+            ? "public int MatchKeyword(byte[] input, int start, int end) => MatchKeywords(new global::System.ReadOnlySpan<byte>(input, start, end - start));"
+            : "public int MatchKeyword(byte[] input, int start, int end) => _tables.MatchKeyword(input, start, end);");
         writer.Close();
+
+        if (keywords is not null)
+        {
+            // The keywords are recognized with switches on their length and on chunks of their bytes read as integers
+            writer.Line();
+            writer.Line("private static int MatchKeywords(global::System.ReadOnlySpan<byte> input)");
+            writer.Open();
+            var body = KnownBytesLookup.Generate(
+                keywords.Entries.Select(e => e.Key).ToList(),
+                index => keywords.Entries[index].Value.ToString(CultureInfo.InvariantCulture),
+                "-1");
+            foreach (var line in body.Split('\n'))
+            {
+                if (line.Length > 0)
+                {
+                    writer.Line(line);
+                }
+            }
+
+            writer.Close();
+        }
 
         var tables = new StringBuilder();
         if (compileMain)

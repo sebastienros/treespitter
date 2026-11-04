@@ -20,6 +20,7 @@ releases are `v*.*.*` tags, see [docs/release.md](docs/release.md).
   get precompiled parsers, with the tables embedded and the lexer compiled to C#.
 - `TreeSpitter.Languages`: precompiled JSON, Go, Java and C parsers.
 - Performance: in-place reductions on the single-version path, pooled tree memory (`SyntaxTree.Dispose`), vectorized
-  skipping of self-looping lexer states, and a hash table for the keywords.
+  skipping of self-looping lexer states, and keyword lookups by length and first 8 bytes (switches on chunks of the
+  token read as integers in generated parsers, like Parlot).
 - `Corpus`: reads and runs tree-sitter corpus tests (`test/corpus/*.txt`).
-- `tree-spitter` command line tool (`grammar`, `info`, `compile`, `generate`, `parse`, `test`).
+- `treespitter` command line tool (`grammar`, `info`, `compile`, `generate`, `parse`, `test`).

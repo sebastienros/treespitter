@@ -120,6 +120,12 @@ public interface ILexFunction
 
     /// <summary>Lexes a keyword from the current position. Returns whether a keyword was accepted.</summary>
     bool LexKeyword(Lexer lexer, int state);
+
+    /// <summary>
+    /// Looks up the bytes of a word token in the keywords of the language: returns the symbol of the keyword, -1 when
+    /// the token isn't a keyword, or -2 when <see cref="LexKeyword"/> must run (the keywords aren't a set of strings).
+    /// </summary>
+    int MatchKeyword(byte[] input, int start, int end);
 }
 
 /// <summary>
@@ -129,20 +135,25 @@ public interface ILexFunction
 [EditorBrowsable(EditorBrowsableState.Advanced)]
 public readonly struct TableLexFunction : ILexFunction
 {
-    internal TableLexFunction(LexAutomaton main, LexAutomaton keyword)
+    internal TableLexFunction(LexAutomaton main, LexAutomaton keyword, KeywordTable? keywords)
     {
         _main = main;
         _keyword = keyword;
+        _keywords = keywords;
     }
 
     private readonly LexAutomaton _main;
     private readonly LexAutomaton _keyword;
+    private readonly KeywordTable? _keywords;
 
     /// <inheritdoc />
     public bool Lex(Lexer lexer, int state) => Run(_main, lexer, state);
 
     /// <inheritdoc />
     public bool LexKeyword(Lexer lexer, int state) => Run(_keyword, lexer, state);
+
+    /// <inheritdoc />
+    public int MatchKeyword(byte[] input, int start, int end) => _keywords is null ? KeywordTable.UseAutomaton : _keywords.Lookup(input, start, end);
 
     private static bool Run(LexAutomaton table, Lexer lexer, int state)
     {

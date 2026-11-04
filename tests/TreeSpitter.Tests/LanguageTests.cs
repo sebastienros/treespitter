@@ -55,7 +55,7 @@ public sealed class LanguageTests
     public void TheQuickStartOfTheReadmeWorks()
     {
         var parser = Parser.FromGrammarFile(Fixtures.GrammarJs("json"));
-        using var tree = parser.Parse("""{ "name": "tree-spitter", "tags": [1, 2] }""");
+        using var tree = parser.Parse("""{ "name": "treespitter", "tags": [1, 2] }""");
 
         Assert.Equal(
             "(document (object (pair key: (string (string_content)) value: (string (string_content))) (pair key: (string (string_content)) value: (array (number) (number)))))",
@@ -63,6 +63,20 @@ public sealed class LanguageTests
         var pair = tree.RootNode.NamedChildren.First().NamedChildren.First();
         Assert.Equal("\"name\"", pair.ChildByFieldName("key").Text);
         Assert.Equal(new Point(0, 2), pair.StartPoint);
+    }
+
+    [Fact]
+    public void GrammarsCanLogWithConsole()
+    {
+        var messages = new List<string>();
+        var evaluator = new Dsl.GrammarEvaluator(new Dsl.GrammarEvaluatorOptions { Log = messages.Add });
+        var grammar = evaluator.Evaluate("""
+            console.log('evaluating', 1);
+            module.exports = grammar({ name: 'logs', rules: { document: _ => 'x' } });
+            """);
+
+        Assert.Equal("logs", grammar.Name);
+        Assert.Equal(["evaluating 1"], messages);
     }
 
     [Fact]

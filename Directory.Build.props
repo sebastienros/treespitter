@@ -12,8 +12,8 @@
     <Authors>Sébastien Ros</Authors>
     <Copyright>Copyright (c) 2026 Sébastien Ros</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/sebastienros/tree-spitter</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/sebastienros/tree-spitter</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/sebastienros/treespitter</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/sebastienros/treespitter</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>

@@ -88,14 +88,18 @@ The hot paths don't allocate. Measured optimizations, in the order of their gain
 3. Lexer self-loops (`ByteRun`): for each lex state, the ASCII bytes whose transition loops on the state (white space,
    contents of strings and comments, identifiers). Runs are scanned byte by byte, then with a vectorized
    `SearchValues<byte>.IndexOfAnyExcept` after 16 bytes: 6 to 10% on real-world files.
-4. Keywords (`KeywordTable`): when the keyword automaton accepts a finite set of strings, the bytes of the word token are
-   looked up in a hash table (keywords that are prefixes of other keywords still run the automaton). The gain is within
-   the noise: the automaton already stops after a few bytes for most identifiers.
+4. Keywords: tree-sitter lexes identifiers with the word token, then runs a keyword automaton from the start of the
+   token. When the keyword automaton accepts a finite set of strings, the keyword is looked up instead, with the
+   technique of Parlot's `KnownStringLookup`: the length and the first 8 bytes of the token as a `ulong`. The VM uses a
+   table keyed by both (`KeywordTable`); generated parsers emit `MatchKeywords`, a switch on the length then switches on
+   chunks of the token read as little-endian integers (`CodeGen/KnownBytesLookup`), so a keyword of up to 8 bytes is one
+   integer comparison. Keywords that are prefixes of other keywords still run the automaton. The gain is 1 to 3%: the
+   automaton already stops after a few bytes for most identifiers.
 
 ## Source generation
 
 `CodeGen/CSharpGenerator` writes a partial class with the serialized tables (a `byte[]` in the assembly), a `Language`
-property and a lex function struct. The lexer automata are compiled to C# (a `switch` on the state with a `switch` on the
+property and a lex function struct with the keyword switches. The lexer automata are compiled to C# (a `switch` on the state with a `switch` on the
 code point, `goto` transitions, like tree-sitter's `ts_lex`) when the method is small enough for the JIT to optimize it:
 past about 2000 basic blocks the JIT compiles it with MinOpts, so large automata (like C's main lexer) use the table
 lexer. `TreeSpitter.Generators` is a Roslyn incremental generator for the classes marked `[GeneratedLanguage("…/grammar.json")]`:

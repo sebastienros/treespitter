@@ -30,7 +30,6 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
     private readonly SubtreeList _trailingExtras2 = new();
     private readonly List<(ushort Symbol, int Count, int DynamicPrecedence, ushort ProductionId)> _reduceActions = [];
     private readonly ParseActionEntry[] _actions;
-    private readonly KeywordTable? _keywords;
     private int _finishedTree;
     private int _nodesPerKilobyte = 400;
     private int _childrenPerKilobyte = 400;
@@ -46,7 +45,6 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
         _arena = new SubtreeArena(language);
         _stack = new ParseStack(_arena);
         _actions = language.ParseActions;
-        _keywords = language.Keywords;
     }
 
     public SyntaxTree Parse(byte[] input, int length)
@@ -225,7 +223,7 @@ internal sealed class ParserEngine<TLexer> : IParserEngine
         var isKeyword = false;
         if (symbol == language.KeywordCaptureToken && symbol != 0)
         {
-            var keyword = _keywords is null ? KeywordTable.UseAutomaton : _keywords.Lookup(lexer.Input, tokenStart, tokenEnd);
+            var keyword = _lexFunction.MatchKeyword(lexer.Input, tokenStart, tokenEnd);
             if (keyword != KeywordTable.UseAutomaton)
             {
                 // The keywords are a set of strings: the lookup gives the keyword of the automaton

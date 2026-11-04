@@ -18,7 +18,7 @@
 - The `netstandard2.0` target is for .NET Framework hosts; keep it building and behaving like `net10.0` (polyfills come
   from Meziantou.Polyfill). The build is warning-free (`TreatWarningsAsErrors`) and public APIs are documented
   (`CS1591` is an error).
-- Layout: `src/` (shipped: the library and the `tree-spitter` tool), `grammars/` (vendored tree-sitter grammars and
+- Layout: `src/` (shipped: the library and the `treespitter` tool), `grammars/` (vendored tree-sitter grammars and
   corpora, used by the tests and the benchmarks), `tests/` (xunit.v3 on Microsoft.Testing.Platform, sentence-style test
   names, plain `Assert`), `benchmarks/`, `docs/`.
 - The corpus tests of the vendored grammars must match `grammars/*/known-failures.txt`: remove the entries a change

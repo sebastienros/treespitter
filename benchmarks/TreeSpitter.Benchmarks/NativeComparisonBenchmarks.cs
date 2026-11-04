@@ -65,7 +65,7 @@ public class NativeComparisonBenchmarks
 
             var start = Math.Max(0, index - 80);
             throw new InvalidOperationException(
-                $"The {Language} trees differ at {index}:\n  native:      ...{expected.Substring(start, Math.Min(160, expected.Length - start))}\n  tree-spitter: ...{actual.Substring(start, Math.Min(160, actual.Length - start))}");
+                $"The {Language} trees differ at {index}:\n  native:      ...{expected.Substring(start, Math.Min(160, expected.Length - start))}\n  treespitter: ...{actual.Substring(start, Math.Min(160, actual.Length - start))}");
         }
     }
 

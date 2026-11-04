@@ -205,13 +205,13 @@ internal static class Program
     {
         Console.Error.WriteLine("""
             usage:
-              tree-spitter grammar <grammar.js|grammar.json>            prints the grammar as JSON (like src/grammar.json)
-              tree-spitter info <grammar>                               prints the size of the generated tables
-              tree-spitter compile <grammar> [-o file.tsl]              writes the compiled tables (Language.Save)
-              tree-spitter generate <grammar|file.tsl> [-o file.cs] [--namespace ns] [--class name]
+              treespitter grammar <grammar.js|grammar.json>            prints the grammar as JSON (like src/grammar.json)
+              treespitter info <grammar>                               prints the size of the generated tables
+              treespitter compile <grammar> [-o file.tsl]              writes the compiled tables (Language.Save)
+              treespitter generate <grammar|file.tsl> [-o file.cs] [--namespace ns] [--class name]
                                                                         generates the C# source of a precompiled parser
-              tree-spitter parse <grammar> <file|-> [--time]            prints the syntax tree
-              tree-spitter test <grammar> <corpus> [-v] [--filter text] runs tree-sitter corpus tests
+              treespitter parse <grammar> <file|-> [--time]            prints the syntax tree
+              treespitter test <grammar> <corpus> [-v] [--filter text] runs tree-sitter corpus tests
             """);
         return 2;
     }

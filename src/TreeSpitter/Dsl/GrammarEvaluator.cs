@@ -114,11 +114,11 @@ public sealed class GrammarEvaluator
             configureModules?.Invoke(options);
         });
 
-        engine.SetValue("__tree-spitter_log", new Action<string>(message => _options.Log?.Invoke(message)));
+        engine.SetValue("__treespitter_log", new Action<string>(message => _options.Log?.Invoke(message)));
         engine.Execute(
             """
             globalThis.console = {
-              log: (...args) => __tree-spitter_log(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')),
+              log: (...args) => __treespitter_log(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')),
               info: (...args) => console.log(...args),
               warn: (...args) => console.log(...args),
               error: (...args) => console.log(...args),

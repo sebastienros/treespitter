@@ -1,13 +1,13 @@
 # Releasing TreeSpitter
 
 The packages are released together, with the same version: `TreeSpitter` (the library), `TreeSpitter.Generators` (the
-source generator), `TreeSpitter.Languages` (the precompiled parsers) and `TreeSpitter.Cli` (the `tree-spitter` .NET
+source generator), `TreeSpitter.Languages` (the precompiled parsers) and `TreeSpitter.Cli` (the `treespitter` .NET
 tool). A release is a `vX.Y.Z` tag on a commit of `main`; CI does the rest. Nobody packs or pushes
 packages by hand.
 
 ## One-time setup
 
-- nuget.org: a trusted publishing policy for the `sebastienros` account, repository `sebastienros/tree-spitter`,
+- nuget.org: a trusted publishing policy for the `sebastienros` account, repository `sebastienros/treespitter`,
   workflow `publish.yml`, environment `release`. The workflow exchanges its GitHub OIDC token for a short-lived API key
   (`NuGet/login`); there is no long-lived nuget.org key in the repository.
 - GitHub: an environment named `release` (add required reviewers to make each release wait for an approval).
@@ -45,4 +45,4 @@ provenance, and pushes them to nuget.org.
 
 [`build.yml`](../.github/workflows/build.yml) runs on pull requests and on `main`. On `main` it pushes
 `<VersionPrefix>-preview.<run number>` packages to the Feedz feed
-`https://f.feedz.io/sebastienros/tree-spitter/nuget/index.json`.
+`https://f.feedz.io/sebastienros/treespitter/nuget/index.json`.

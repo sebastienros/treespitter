@@ -68,7 +68,7 @@ skipping of the self-looping lexer states (white space, comments, strings).
 dotnet add package TreeSpitter            # the library: grammar.js → parser
 dotnet add package TreeSpitter.Languages  # precompiled JSON, Go, Java and C parsers
 dotnet add package TreeSpitter.Generators # the source generator, for your own grammars
-dotnet tool install -g TreeSpitter.Cli    # the tree-spitter command
+dotnet tool install -g TreeSpitter.Cli    # the treespitter command
 ```
 
 The library targets .NET 10 and .NET Standard 2.0 (for .NET Framework hosts). Its assemblies are strong-named with a
@@ -83,7 +83,7 @@ Compile a grammar at runtime, from a `grammar.js` (or `grammar.json`) file:
 using TreeSpitter;
 
 var parser = Parser.FromGrammarFile("tree-sitter-json/grammar.js");
-using var tree = parser.Parse("""{ "name": "tree-spitter", "tags": [1, 2] }""");
+using var tree = parser.Parse("""{ "name": "treespitter", "tags": [1, 2] }""");
 
 Console.WriteLine(tree.RootNode.ToSExpression());
 // (document (object (pair key: (string (string_content)) value: (string (string_content)))
@@ -113,7 +113,7 @@ using var tree = Go.CreateParser().ParseFile("main.go");
 ```
 
 For your own grammars, add `TreeSpitter.Generators` and the `grammar.json` of the grammar (from `tree-sitter generate`, or
-`tree-spitter grammar grammar.js`) as an additional file:
+`treespitter grammar grammar.js`) as an additional file:
 
 ```xml
 <ItemGroup>
@@ -131,7 +131,7 @@ var tree = MyLanguage.CreateParser().Parse(source);
 ```
 
 The generated class embeds the tables (`Language.Save()`), loads them once (`Language.Load()`), and compiles the lexer
-automata to C# when they're small enough for the JIT to optimize them. `tree-spitter generate` writes the same source
+automata to C# when they're small enough for the JIT to optimize them. `treespitter generate` writes the same source
 to a file.
 
 ### Grammars
@@ -149,13 +149,13 @@ File.WriteAllBytes("go.tsl", language.Save());           // the compiled tables,
 ## Command line
 
 ```
-tree-spitter grammar <grammar.js|grammar.json>                     prints the grammar as JSON (like src/grammar.json)
-tree-spitter info <grammar>                                        prints the size of the generated tables
-tree-spitter compile <grammar> [-o file.tsl]                       writes the compiled tables
-tree-spitter generate <grammar|file.tsl> [-o file.cs] [--namespace ns] [--class name]
+treespitter grammar <grammar.js|grammar.json>                     prints the grammar as JSON (like src/grammar.json)
+treespitter info <grammar>                                        prints the size of the generated tables
+treespitter compile <grammar> [-o file.tsl]                       writes the compiled tables
+treespitter generate <grammar|file.tsl> [-o file.cs] [--namespace ns] [--class name]
                                                                    generates the C# source of a precompiled parser
-tree-spitter parse <grammar> <file|-> [--time]                     prints the syntax tree
-tree-spitter test <grammar> <corpus> [-v] [--filter text]          runs tree-sitter corpus tests
+treespitter parse <grammar> <file|-> [--time]                     prints the syntax tree
+treespitter test <grammar> <corpus> [-v] [--filter text]          runs tree-sitter corpus tests
 ```
 
 ## Grammar support
