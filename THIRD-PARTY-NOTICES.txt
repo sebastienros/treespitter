@@ -1,0 +1,72 @@
+TreeSpitter third-party notices
+===============================
+
+TreeSpitter is a C# port of tree-sitter (https://github.com/tree-sitter/tree-sitter), which is licensed under the MIT
+License:
+
+- src/TreeSpitter/Dsl/dsl.js reproduces the behavior and the error messages of tree-sitter's
+  crates/generate/src/dsl.js (commit 9632b561db2f647e9c0be9e61cf91f10671a6491).
+- src/TreeSpitter/Generation ports the parser generator of tree-sitter v0.25.10 (cli/generate: prepare_grammar,
+  build_tables, render), and the parser runtime (ParserEngine, ParseStack, SubtreeArena, SyntaxTree) ports
+  lib/src/parser.c, stack.c, subtree.c and the S-expression writer of tree-sitter v0.25.10.
+
+The repository vendors grammars and corpora of tree-sitter grammars, under grammars/. They are used by the tests and
+the benchmarks and are not part of the packages. Each directory keeps the license of its project and a SOURCE.md with
+its origin.
+
+---------------------------------------------------------
+
+tree-sitter - MIT
+https://github.com/tree-sitter/tree-sitter @ v0.25.10 and 9632b561db2f647e9c0be9e61cf91f10671a6491
+Used by: src/TreeSpitter/Dsl/dsl.js, src/TreeSpitter/Generation (port of cli/generate), and the parser runtime
+(port of lib/src/parser.c, stack.c and subtree.c)
+
+The MIT License (MIT)
+
+Copyright (c) 2018-2024 Max Brunsfeld
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---------------------------------------------------------
+
+tree-sitter-json - MIT
+https://github.com/tree-sitter/tree-sitter-json @ 254c42a6476413b776221e03982ac8ae159eeb72
+Copyright (c) 2014 Max Brunsfeld
+Used by: grammars/json (test fixture, see its LICENSE)
+
+---------------------------------------------------------
+
+tree-sitter-go - MIT
+https://github.com/tree-sitter/tree-sitter-go @ 2346a3ab1bb3857b48b29d779a1ef9799a248cd7
+Copyright (c) 2014 Max Brunsfeld
+Used by: grammars/go (test fixture, see its LICENSE)
+
+---------------------------------------------------------
+
+tree-sitter-java - MIT
+https://github.com/tree-sitter/tree-sitter-java @ e10607b45ff745f5f876bfa3e94fbcc6b44bdc11
+Copyright (c) 2017 Ayman Nadeem
+Used by: grammars/java (test fixture, see its LICENSE)
+
+---------------------------------------------------------
+
+tree-sitter-c - MIT
+https://github.com/tree-sitter/tree-sitter-c @ b780e47fc780ddc8da13afa35a3f4ed5c157823d
+Copyright (c) 2014 Max Brunsfeld
+Used by: grammars/c (test fixture, see its LICENSE)

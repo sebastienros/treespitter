@@ -1,0 +1,102 @@
+name: Publish
+
+permissions:
+  contents: read
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    env:
+        DOTNET_NOLOGO: true
+        DOTNET_CLI_TELEMETRY_OPTOUT: 1
+        NUGET_PACKAGES: /mnt/nuget/packages
+        NUGET_HTTP_CACHE_PATH: ${{ github.workspace }}/.nuget/http-cache
+        NUGET_SCRATCH: ${{ github.workspace }}/.nuget/scratch
+        NUGET_PLUGINS_CACHE_PATH: ${{ github.workspace }}/.nuget/plugins
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Prepare Linux NuGet package directory
+      shell: bash
+      run: sudo install -d -o "$(id -u)" -g "$(id -g)" "$NUGET_PACKAGES"
+    - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      with:
+        dotnet-version: |
+          10.0.x
+        global-json-file: global.json
+
+    - name: Validate release tag
+      id: release
+      shell: bash
+      run: |
+        set -euo pipefail
+        core_identifier='(0|[1-9][0-9]*)'
+        prerelease_identifier='(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)'
+        release_pattern="^v${core_identifier}\.${core_identifier}\.${core_identifier}(-${prerelease_identifier}(\.${prerelease_identifier})*)?$"
+        if [[ ! "$GITHUB_REF_NAME" =~ $release_pattern ]]; then
+          echo "::error::Release tags must be semantic versions such as v1.2.3 or v1.2.3-preview.1."
+          exit 1
+        fi
+
+        release_commit="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
+        if ! git merge-base --is-ancestor "$release_commit" origin/main; then
+          echo "::error::Release tags must point to a commit contained in origin/main."
+          exit 1
+        fi
+
+        echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore
+      run: dotnet restore TreeSpitter.slnx -p:Configuration=Release -p:Version=${{ steps.release.outputs.version }} -p:ContinuousIntegrationBuild=True
+
+    - name: Build
+      run: dotnet build TreeSpitter.slnx --configuration Release --no-restore -p:Version=${{ steps.release.outputs.version }} -p:ContinuousIntegrationBuild=True
+
+    - name: Test
+      run: dotnet test --solution TreeSpitter.slnx --configuration Release --no-build --minimum-expected-tests 1
+
+    - name: Pack with dotnet
+      shell: bash
+      run: |
+        set -euo pipefail
+        for project in src/TreeSpitter/TreeSpitter.csproj src/TreeSpitter.Cli/TreeSpitter.Cli.csproj; do
+          dotnet pack "$project" --output artifacts --configuration Release --no-build -p:Version=${{ steps.release.outputs.version }} -p:ContinuousIntegrationBuild=True
+        done
+
+    - name: Attest NuGet packages
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      with:
+        subject-path: artifacts/*.nupkg
+
+    - name: NuGet login
+      id: nuget-login
+      uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1
+      with:
+        user: sebastienros
+
+    - name: Push with dotnet
+      shell: bash
+      env:
+        NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+      run: |
+        set -euo pipefail
+        for package in artifacts/*.nupkg; do
+          dotnet nuget push "$package" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+        done

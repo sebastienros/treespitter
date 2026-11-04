@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>tree-spitter</ToolCommandName>
+    <PackageId>TreeSpitter.Cli</PackageId>
+    <Description>Command line for TreeSpitter: evaluates tree-sitter grammars, builds their parse tables, generates C# parsers, parses files and runs tree-sitter corpus tests.</Description>
+    <PackageTags>tree-sitter;parser;grammar;cli</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../TreeSpitter/TreeSpitter.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,28 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- C# 15 requires the .NET 11 SDK (see global.json); the library still targets netstandard2.0 and net10.0. -->
+    <LangVersion>15</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <IsPackable>false</IsPackable>
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <Authors>Sébastien Ros</Authors>
+    <Copyright>Copyright (c) 2026 Sébastien Ros</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/sebastienros/tree-spitter</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/sebastienros/tree-spitter</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <!-- Non-secret development strong-name key, so signed .NET Framework hosts can reference the netstandard2.0 build
+         (Jint is strong-named too); not a production identity or an authenticity guarantee. -->
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)TreeSpitter.Development.snk</AssemblyOriginatorKeyFile>
+    <PublicKey>002400000480000094000000060200000024000052534131000400000100010027dfc14fd4fe50049672a47e9c235b2ba8d33ac147ff8b4a102109fbd3d2750e7b4243fe9ec911f59c534d9fbbea25f41c3808a055286cdf3ea63534cfca3995e8cb9faa0a1af3c7e21302a8c69d0f43e200ac070ecdb012aa1ab8b541c241515cf45e3b201ebc5a57ea2d80e346172d71d90f56a909ddbc159b91f32f5fc8e6</PublicKey>
+  </PropertyGroup>
+</Project>

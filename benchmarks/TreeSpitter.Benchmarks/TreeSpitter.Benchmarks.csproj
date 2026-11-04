@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- TreeSitter.DotNet isn't strong-named, and the benchmarks aren't shipped. -->
+    <SignAssembly>false</SignAssembly>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" />
+    <!-- The native tree-sitter parsers, to compare with (NativeComparisonBenchmarks). -->
+    <PackageReference Include="TreeSitter.DotNet" />
+    <ProjectReference Include="../../src/TreeSpitter/TreeSpitter.csproj" />
+  </ItemGroup>
+</Project>

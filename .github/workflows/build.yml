@@ -1,0 +1,82 @@
+name: Build
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+
+  push:
+    branches: [ main ]
+    paths-ignore:
+    - 'docs/**'
+    - '**/*.md'
+
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+    - 'docs/**'
+    - '**/*.md'
+
+jobs:
+  build:
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+
+    runs-on: ${{ matrix.os }}
+    env:
+        DOTNET_NOLOGO: true
+        DOTNET_CLI_TELEMETRY_OPTOUT: 1
+        NUGET_PACKAGES: ${{ matrix.os == 'ubuntu-latest' && '/mnt/nuget/packages' || format('{0}/.nuget/packages', github.workspace) }}
+        NUGET_HTTP_CACHE_PATH: ${{ github.workspace }}/.nuget/http-cache
+        NUGET_SCRATCH: ${{ github.workspace }}/.nuget/scratch
+        NUGET_PLUGINS_CACHE_PATH: ${{ github.workspace }}/.nuget/plugins
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Prepare Linux NuGet package directory
+      if: runner.os == 'Linux'
+      shell: bash
+      run: sudo install -d -o "$(id -u)" -g "$(id -g)" "$NUGET_PACKAGES"
+    # The .NET 10 runtime runs the tests and the tool; the SDK of global.json (.NET 11, for C# 15) builds them.
+    - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      with:
+        dotnet-version: |
+          10.0.x
+        global-json-file: global.json
+    - name: Restore
+      run: dotnet restore TreeSpitter.slnx -p:Configuration=Release -p:VersionSuffix=preview.${{ github.run_number }} -p:ContinuousIntegrationBuild=True
+    - name: Build
+      run: dotnet build TreeSpitter.slnx --configuration Release --no-restore -p:VersionSuffix=preview.${{ github.run_number }} -p:ContinuousIntegrationBuild=True
+    - name: Test
+      run: dotnet test --solution TreeSpitter.slnx --configuration Release --no-build --minimum-expected-tests 1
+    - name: Check formatting
+      run: dotnet format TreeSpitter.slnx --severity warn --verify-no-changes --no-restore
+    # Packing validates the packages on every build (package validation compares the target frameworks).
+    - name: Pack
+      shell: bash
+      run: |
+        set -euo pipefail
+        for project in src/TreeSpitter/TreeSpitter.csproj src/TreeSpitter.Cli/TreeSpitter.Cli.csproj; do
+          dotnet pack "$project" --output artifacts --configuration Release --no-build -p:VersionSuffix=preview.${{ github.run_number }} -p:ContinuousIntegrationBuild=True
+        done
+
+    - name: Push preview packages to Feedz
+      if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && matrix.os == 'ubuntu-latest'
+      shell: bash
+      env:
+        FEEDZ_IO_API_KEY: ${{ secrets.FEEDZ_IO_API_KEY }}
+      run: |
+        set -euo pipefail
+        if [[ -z "$FEEDZ_IO_API_KEY" ]]; then
+          echo "Feedz publishing skipped: FEEDZ_IO_API_KEY is not configured."
+          exit 0
+        fi
+        for package in artifacts/*.nupkg; do
+          dotnet nuget push "$package" --api-key "$FEEDZ_IO_API_KEY" --source https://f.feedz.io/sebastienros/tree-spitter/nuget/index.json --skip-duplicate
+        done

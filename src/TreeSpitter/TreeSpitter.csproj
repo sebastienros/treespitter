@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Directory.Build.props sets TargetFramework for single-target projects; clear it so TargetFrameworks applies. -->
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>netstandard2.0;net10.0</TargetFrameworks>
+    <IsPackable>true</IsPackable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Description>Runs tree-sitter grammars on .NET without native code: grammar.js files are evaluated with Jint, compiled to LR(1) parse tables and lexer automata like tree-sitter generate does, and run by a GLR virtual machine or as source-generated C#.</Description>
+    <PackageTags>tree-sitter;parser;grammar;syntax-tree;glr;lr;jint</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
+    <EnablePackageValidation>true</EnablePackageValidation>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Jint" />
+    <PackageReference Include="Meziantou.Polyfill" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Dsl/dsl.js" LogicalName="TreeSpitter.Dsl.dsl.js" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <None Include="../../THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="licenses/THIRD-PARTY-NOTICES.txt" />
+    <InternalsVisibleTo Include="TreeSpitter.Tests" />
+    <InternalsVisibleTo Include="TreeSpitter.Benchmarks" />
+  </ItemGroup>
+</Project>
