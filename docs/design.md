@@ -200,8 +200,19 @@ array lookup, and its self-loops are vectorized), within 3% either way on the 13
 optimized, and 22 to 30% slower for JavaScript, TypeScript and Rust, whose lexer methods were too large to be optimized
 (the JIT compiles the methods of more than about 2000 basic blocks with MinOpts). `TreeSpitter.Generators` is a Roslyn
 incremental generator for the classes marked `[GeneratedLanguage("…/grammar.json")]`: it compiles the source of the
-library (without Jint) and reads the grammars from the `AdditionalFiles`. `TreeSpitter.Languages` uses it for the 27
-grammars; a development build can generate only some of them (`TreeSpitterGrammars=json,go dotnet build`).
+library (without Jint) and reads the grammars from the `AdditionalFiles`.
+
+`TreeSpitter.Languages` marks its classes with `[GeneratedLanguage]` too (the tests find the languages and their
+scanners with it), but doesn't use the source generator: Roslyn runs the outputs of a generator one after the other, at
+each compilation of the project and for each target framework, which compiled the 27 grammars twice at each build. A
+target of the project (`TreeSpitterGenerateLanguages`) runs `treespitter generate-batch` instead: the grammars listed by
+the `TreeSpitterGrammar` items of the project (with the class and the external scanner of their language) are compiled
+in parallel, with the server garbage collector, to the same C# files as the source generator's, in
+`obj/<configuration>/generated` for the target frameworks. The builds of the target frameworks call the target on the
+project without target framework, which MSBuild builds once, and the target only compiles the grammars whose
+`grammar.json` is newer than their file (all of them when the tool or the project changed). A development build can
+generate only some grammars (`TreeSpitterGrammars=json,go dotnet build`), and `TreeSpitterGenerateParallelism` limits the
+grammars compiled at the same time (all the processors by default).
 
 ## Limitations
 

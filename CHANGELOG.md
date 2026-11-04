@@ -53,6 +53,10 @@ releases are `v*.*.*` tags, see [docs/release.md](docs/release.md).
 - Performance: the comparison of the trees of merged versions skips their shared subtrees (C++ 22% faster), the error
   recovery reuses its lists, and the lines of the input are indexed only as far as the error costs need them. The state
   minimization of the generator compares the successors of the states without lookups (10 to 26% faster compilations).
+- `TreeSpitter.Languages` compiles its 27 grammars with the new `treespitter generate-batch` command instead of the
+  source generator: in parallel, once for its two target frameworks instead of twice, and only the grammars which
+  changed (the generated sources are the same). A clean build of the solution takes 231 to 238 s instead of 387 to 636 s,
+  and a build after a change of a scanner or a grammar 66 to 76 s instead of 342 s.
 - Regular expressions use Unicode simple case folding for the `i` flag, fold the leaves of a class before the
   negations, negate `\p{name!=value}` and reject non-ASCII byte classes in `(?-u:...)`.
 

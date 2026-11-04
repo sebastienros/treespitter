@@ -11,16 +11,136 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../TreeSpitter/TreeSpitter.csproj" />
-    <ProjectReference Include="../TreeSpitter.Generators/TreeSpitter.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <PackageReference Include="Meziantou.Polyfill" PrivateAssets="all" />
   </ItemGroup>
   <ItemGroup>
-    <!-- The grammars, compiled by the source generator. -->
-    <AdditionalFiles Include="../../grammars/*/grammar.json" LinkBase="Grammars" />
     <!-- A development build can generate only some grammars, to build faster: TreeSpitterGrammars=json,ruby dotnet build -->
-    <CompilerVisibleProperty Include="TreeSpitterGrammars" />
     <AssemblyMetadata Include="TreeSpitterGrammars" Value="$(TreeSpitterGrammars)" Condition="'$(TreeSpitterGrammars)' != ''" />
     <None Include="../../README.md" Pack="true" PackagePath="/" />
     <None Include="../../THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="licenses/THIRD-PARTY-NOTICES.txt" />
   </ItemGroup>
+
+  <!--
+    The precompiled parsers. The classes of the languages are marked with [GeneratedLanguage] like the classes of the users
+    of TreeSpitter.Generators, but the source generator would compile the 27 grammars one after the other, for each target
+    framework, at each compilation of the project. The grammars are compiled by the treespitter tool instead, in parallel,
+    once for the target frameworks and only when a grammar or the tool changed, to C# files like the ones of the source
+    generator. Each grammar is the directory of its grammar.json in grammars/, with the partial class of its language and
+    the external scanner of the [GeneratedLanguage] attribute of the class.
+  -->
+  <PropertyGroup>
+    <TreeSpitterGrammarsDirectory>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..', '..', 'grammars'))</TreeSpitterGrammarsDirectory>
+    <TreeSpitterGeneratedDirectory>$([MSBuild]::EnsureTrailingSlash($([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(BaseIntermediateOutputPath)', '$(Configuration)', 'generated'))))))</TreeSpitterGeneratedDirectory>
+    <TreeSpitterLanguagesNamespace>TreeSpitter.Languages</TreeSpitterLanguagesNamespace>
+    <!-- The number of grammars compiled at the same time, all the processors by default. -->
+    <TreeSpitterGenerateParallelism Condition="'$(TreeSpitterGenerateParallelism)' == ''">0</TreeSpitterGenerateParallelism>
+  </PropertyGroup>
+  <ItemGroup>
+    <TreeSpitterGrammar Include="agda" ClassName="Agda" ExternalScanner="Scanners.AgdaScanner" />
+    <TreeSpitterGrammar Include="bash" ClassName="Bash" ExternalScanner="Scanners.BashScanner" />
+    <TreeSpitterGrammar Include="c" ClassName="C" />
+    <TreeSpitterGrammar Include="c-sharp" ClassName="CSharp" ExternalScanner="Scanners.CSharpScanner" />
+    <TreeSpitterGrammar Include="cpp" ClassName="Cpp" ExternalScanner="Scanners.CppScanner" />
+    <TreeSpitterGrammar Include="css" ClassName="Css" ExternalScanner="Scanners.CssScanner" />
+    <TreeSpitterGrammar Include="embedded-template" ClassName="EmbeddedTemplate" />
+    <TreeSpitterGrammar Include="go" ClassName="Go" />
+    <TreeSpitterGrammar Include="haskell" ClassName="Haskell" ExternalScanner="Scanners.HaskellScanner" />
+    <TreeSpitterGrammar Include="html" ClassName="Html" ExternalScanner="Scanners.HtmlScanner" />
+    <TreeSpitterGrammar Include="java" ClassName="Java" />
+    <TreeSpitterGrammar Include="javascript" ClassName="JavaScript" ExternalScanner="Scanners.JavaScriptScanner" />
+    <TreeSpitterGrammar Include="jsdoc" ClassName="JsDoc" ExternalScanner="Scanners.JsDocScanner" />
+    <TreeSpitterGrammar Include="json" ClassName="Json" />
+    <TreeSpitterGrammar Include="julia" ClassName="Julia" ExternalScanner="Scanners.JuliaScanner" />
+    <TreeSpitterGrammar Include="ocaml" ClassName="OCaml" ExternalScanner="Scanners.OCamlScanner" />
+    <TreeSpitterGrammar Include="ocaml-type" ClassName="OCamlType" ExternalScanner="Scanners.OCamlScanner" />
+    <TreeSpitterGrammar Include="php" ClassName="Php" ExternalScanner="Scanners.PhpScanner" />
+    <TreeSpitterGrammar Include="python" ClassName="Python" ExternalScanner="Scanners.PythonScanner" />
+    <TreeSpitterGrammar Include="ql" ClassName="Ql" />
+    <TreeSpitterGrammar Include="razor" ClassName="Razor" ExternalScanner="Scanners.CSharpScanner" />
+    <TreeSpitterGrammar Include="ruby" ClassName="Ruby" ExternalScanner="Scanners.RubyScanner" />
+    <TreeSpitterGrammar Include="rust" ClassName="Rust" ExternalScanner="Scanners.RustScanner" />
+    <TreeSpitterGrammar Include="scala" ClassName="Scala" ExternalScanner="Scanners.ScalaScanner" />
+    <TreeSpitterGrammar Include="tsx" ClassName="Tsx" ExternalScanner="Scanners.TypeScriptScanner" />
+    <TreeSpitterGrammar Include="typescript" ClassName="TypeScript" ExternalScanner="Scanners.TypeScriptScanner" />
+    <TreeSpitterGrammar Include="verilog" ClassName="Verilog" />
+  </ItemGroup>
+  <ItemGroup>
+    <TreeSpitterTool Include="../TreeSpitter.Cli/TreeSpitter.Cli.csproj" />
+  </ItemGroup>
+
+  <!--
+    The grammar.json files of the grammars of the build (TreeSpitterGrammars), with their C# files: the items are the files,
+    so that the target which generates them is run only for the files out of date.
+  -->
+  <Target Name="_TreeSpitterSelectGrammars">
+    <PropertyGroup>
+      <_TreeSpitterSelection>;$(TreeSpitterGrammars.Replace(',', ';').Replace(' ', ''));</_TreeSpitterSelection>
+    </PropertyGroup>
+    <ItemGroup>
+      <_TreeSpitterGrammar Include="@(TreeSpitterGrammar->'$(TreeSpitterGrammarsDirectory)%(Identity)/grammar.json')" Condition="'$(TreeSpitterGrammars)' == '' or $(_TreeSpitterSelection.Contains(';%(TreeSpitterGrammar.Identity);'))">
+        <OutputPath>$(TreeSpitterGeneratedDirectory)$(TreeSpitterLanguagesNamespace).%(TreeSpitterGrammar.ClassName).g.cs</OutputPath>
+        <ScannerName Condition="'%(TreeSpitterGrammar.ExternalScanner)' != ''">global::$(TreeSpitterLanguagesNamespace).%(TreeSpitterGrammar.ExternalScanner)</ScannerName>
+      </_TreeSpitterGrammar>
+    </ItemGroup>
+  </Target>
+
+  <!-- The treespitter tool, built unless the project references aren't (BuildProjectReferences, the no-dependencies option of dotnet build). -->
+  <Target Name="_TreeSpitterResolveTool">
+    <MSBuild Projects="@(TreeSpitterTool)" Targets="Build" RemoveProperties="TargetFramework;RuntimeIdentifier;TreeSpitterGenerating" Condition="'$(BuildProjectReferences)' != 'false'">
+      <Output TaskParameter="TargetOutputs" PropertyName="_TreeSpitterTool" />
+    </MSBuild>
+    <MSBuild Projects="@(TreeSpitterTool)" Targets="GetTargetPath" RemoveProperties="TargetFramework;RuntimeIdentifier;TreeSpitterGenerating" Condition="'$(BuildProjectReferences)' == 'false'">
+      <Output TaskParameter="TargetOutputs" PropertyName="_TreeSpitterTool" />
+    </MSBuild>
+    <PropertyGroup>
+      <_TreeSpitterLibrary>$([System.IO.Path]::GetDirectoryName('$(_TreeSpitterTool)'))/TreeSpitter.dll</_TreeSpitterLibrary>
+      <_TreeSpitterDotnet>$(DOTNET_HOST_PATH)</_TreeSpitterDotnet>
+      <_TreeSpitterDotnet Condition="'$(_TreeSpitterDotnet)' == ''">dotnet</_TreeSpitterDotnet>
+    </PropertyGroup>
+  </Target>
+
+  <!--
+    Generates the parsers of the grammars which changed, or which aren't generated. Called by the builds of the target
+    frameworks on the project without target framework, with the same properties: MSBuild runs it once for all of them.
+  -->
+  <Target Name="TreeSpitterGenerateLanguages" DependsOnTargets="_TreeSpitterResolveTool;_TreeSpitterSelectGrammars;_TreeSpitterCheckTool;_TreeSpitterGenerateLanguages" />
+
+  <!--
+    Deletes the generated files when the tool or the project changed, so that the grammars are generated again (the tool
+    isn't an input of the files of the grammars, or a missing file would generate all the grammars again).
+  -->
+  <Target Name="_TreeSpitterCheckTool" Inputs="$(_TreeSpitterTool);$(_TreeSpitterLibrary);$(MSBuildProjectFullPath)" Outputs="$(TreeSpitterGeneratedDirectory)tool.stamp">
+    <ItemGroup>
+      <_TreeSpitterGeneratedFile Include="$(TreeSpitterGeneratedDirectory)*.g.cs" />
+    </ItemGroup>
+    <Delete Files="@(_TreeSpitterGeneratedFile)" />
+    <MakeDir Directories="$(TreeSpitterGeneratedDirectory)" />
+    <Touch Files="$(TreeSpitterGeneratedDirectory)tool.stamp" AlwaysCreate="true" />
+  </Target>
+
+  <!-- The grammars are the inputs of their files: the target is run for the files out of date only. -->
+  <Target Name="_TreeSpitterGenerateLanguages" Inputs="@(_TreeSpitterGrammar)" Outputs="@(_TreeSpitterGrammar->'%(OutputPath)')">
+    <PropertyGroup>
+      <_TreeSpitterBatch>$(TreeSpitterGeneratedDirectory)grammars.txt</_TreeSpitterBatch>
+    </PropertyGroup>
+    <MakeDir Directories="$(TreeSpitterGeneratedDirectory)" />
+    <WriteLinesToFile File="$(_TreeSpitterBatch)" Lines="@(_TreeSpitterGrammar->'%(FullPath)%09%(OutputPath)%09$(TreeSpitterLanguagesNamespace)%09%(ClassName)%09%(ScannerName)')" Overwrite="true" />
+    <!-- The server garbage collector: the grammars compiled in parallel allocate a lot (40% faster than the workstation one) -->
+    <Exec Command="&quot;$(_TreeSpitterDotnet)&quot; &quot;$(_TreeSpitterTool)&quot; generate-batch &quot;$(_TreeSpitterBatch)&quot; --parallelism $(TreeSpitterGenerateParallelism)" EnvironmentVariables="DOTNET_gcServer=1" />
+  </Target>
+
+  <!--
+    Adds the generated files to the compilation of a target framework, after generating them (but not in the design-time
+    builds of the IDEs, which use the files of the last build).
+  -->
+  <Target Name="_TreeSpitterAddGeneratedLanguages" BeforeTargets="BeforeCompile" DependsOnTargets="_TreeSpitterSelectGrammars" Condition="'$(TreeSpitterGenerating)' != 'true'">
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="TreeSpitterGenerateLanguages" Properties="TreeSpitterGenerating=true" RemoveProperties="TargetFramework;RuntimeIdentifier" Condition="'$(DesignTimeBuild)' != 'true'" />
+    <ItemGroup>
+      <Compile Include="@(_TreeSpitterGrammar->'%(OutputPath)')" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="_TreeSpitterCleanGeneratedLanguages" AfterTargets="Clean">
+    <RemoveDir Directories="$(TreeSpitterGeneratedDirectory)" />
+  </Target>
 </Project>
