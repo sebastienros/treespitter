@@ -27,17 +27,17 @@ like the native benchmarks.
 
 | Input | Native | Native UTF-8 | TreeSpitter VM | TreeSpitter generated | Speed-up |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| JSON, 10 KB | 1.25 ms | 1.21 ms | 0.305 ms | 0.320 ms | 3.8× |
-| Go, 10 KB | 1.62 ms | 1.65 ms | 0.401 ms | 0.411 ms | 4.0× |
-| Java, 10 KB | 1.44 ms | 1.45 ms | 0.302 ms | 0.293 ms | 4.9× |
-| C, 10 KB | 1.43 ms | 1.44 ms | 0.240 ms | 0.239 ms | 6.0× |
-| JSON, 100 KB | 11.6 ms | 11.6 ms | 3.02 ms | 2.96 ms | 3.9× |
-| Go, 100 KB | 16.5 ms | 16.5 ms | 4.00 ms | 3.96 ms | 4.2× |
-| Java, 100 KB | 14.6 ms | 14.5 ms | 2.95 ms | 3.00 ms | 4.8× |
-| C, 100 KB | 14.8 ms | 14.1 ms | 2.32 ms | 2.35 ms | 6.0× |
+| JSON, 10 KB | 1.18 ms | 1.16 ms | 0.328 ms | 0.327 ms | 3.6× |
+| Go, 10 KB | 1.63 ms | 1.59 ms | 0.405 ms | 0.415 ms | 3.8× |
+| Java, 10 KB | 1.47 ms | 1.52 ms | 0.305 ms | 0.321 ms | 4.7× |
+| C, 10 KB | 1.42 ms | 1.44 ms | 0.261 ms | 0.253 ms | 5.7× |
+| JSON, 100 KB | 11.7 ms | 11.9 ms | 3.19 ms | 3.07 ms | 3.9× |
+| Go, 100 KB | 16.4 ms | 16.8 ms | 3.98 ms | 4.02 ms | 4.2× |
+| Java, 100 KB | 14.7 ms | 14.8 ms | 3.06 ms | 3.10 ms | 4.8× |
+| C, 100 KB | 14.1 ms | 13.9 ms | 2.48 ms | 2.47 ms | 5.6× |
 
 The speed-up is the generated parser against the native parser on the same UTF-8 input. A parse of these inputs
-allocates 72 bytes when the trees are disposed (the memory of a disposed tree goes back to its parser).
+allocates about 120 bytes when the trees are disposed (the memory of a disposed tree goes back to its parser).
 
 All the grammars of `TreeSpitter.Languages`, on inputs made of their corpus tests (the ones without errors, repeated
 while the input stays valid: Agda and Ruby can't be repeated, and the JSDoc and OCaml type documents are a single
@@ -76,9 +76,9 @@ tree-sitter-c:
 
 | File | Native | Native UTF-8 | TreeSpitter generated | Speed-up |
 | --- | ---: | ---: | ---: | ---: |
-| `grammar.json` (JSON, 237 KB) | 13.5 ms | 13.3 ms | 2.91 ms | 4.6× |
-| `parser.c` (C, 79 KB) | 7.94 ms | 7.79 ms | 1.71 ms | 4.6× |
-| `query.c` (C, 149 KB) | 16.3 ms | 15.4 ms | 3.74 ms | 4.1× |
+| `grammar.json` (JSON, 237 KB) | 13.2 ms | 13.2 ms | 2.95 ms | 4.5× |
+| `parser.c` (C, 79 KB) | 7.71 ms | 7.85 ms | 1.68 ms | 4.7× |
+| `query.c` (C, 149 KB) | 16.0 ms | 15.7 ms | 3.77 ms | 4.2× |
 
 Incremental parsing: a character inserted in the middle of an identifier or a number of the inputs above, or removed,
 then the new input parsed with the edited tree, like an editor does on each keystroke. Both parsers get the points of
@@ -111,6 +111,8 @@ the edits, which an editor knows (`quick-incremental`, best of 2 runs):
 | Verilog | 23.27 ms | 4.88 ms | 7.17 ms | 2.76 ms | 1.8× |
 
 The incremental parses are 1.7 to 3.7 times faster than the native ones, except Scala's and HTML's (1.1 and 1.2).
+BenchmarkDotNet gives the same for the generated inputs of JSON, Go, Java and C: 182, 76, 32 and 115 µs per incremental
+parse, against 322, 156, 58 and 193 µs for the native parser (1.7 to 2.1 times faster).
 Earlier versions of this table measured the native parser with the computation of the points of its edits, a scan of
 the input, which made it look 1.5 to 3 times slower than it is.
 
@@ -118,11 +120,14 @@ Preparing a language, which tree-sitter does ahead of time with `tree-sitter gen
 
 | Grammar | Evaluate `grammar.js` | Compile the tables (`tree-sitter generate`) | Load precompiled tables |
 | --- | ---: | ---: | ---: |
-| JSON | 1.4 ms | 1.1 ms | 0.03 ms |
-| Go | 4.7 ms | 0.52 s | 0.58 ms |
-| C | 7.5 ms | 1.52 s | 1.45 ms |
+| JSON | 1.2 ms | 1.2 ms | 0.03 ms |
+| Go | 4.8 ms | 0.46 s | 0.85 ms |
+| C | 7.3 ms | 1.39 s | 1.81 ms |
 
-[benchmarks/TreeSpitter.Benchmarks](benchmarks/TreeSpitter.Benchmarks), BenchmarkDotNet short runs, .NET 10, Linux,
+The largest grammars take longer to compile (C# 22 s, Razor 28 s, Verilog 29 s, C++ 40 s), which the source generator
+does at build time, and their precompiled tables load in 8 to 25 ms.
+
+[benchmarks/TreeSpitter.Benchmarks](benchmarks/TreeSpitter.Benchmarks), BenchmarkDotNet (in process), .NET 10, Linux,
 Intel Xeon 2.7 GHz. The allocations of the native parsers are made by tree-sitter and aren't counted.
 
 Where the time goes, and what made it fast, is described in [docs/design.md](docs/design.md): reductions in place on the
