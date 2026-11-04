@@ -21,11 +21,13 @@ internal static class Grammars
 
     /// <summary>
     /// An input of about <paramref name="size"/> chars made of the inputs of the corpus tests of a grammar: the ones
-    /// which parse without errors, alone and one after the other, repeated.
+    /// which parse without errors, alone and one after the other, repeated while the input has no errors. A grammar
+    /// whose documents can't follow each other (a JSDoc comment) gets a smaller input.
     /// </summary>
     public static string FromCorpus(string name, int size)
     {
         var parser = new Parser(GeneratedLanguage(name));
+        var separator = Separators.GetValueOrDefault(name, "\n");
         var tests = Testing.Corpus.Load(System.IO.Path.Combine(Root(), "grammars", name, "corpus"))
             .Where(t => !t.Skip && !t.Attributes.Any(a => a.StartsWith(":language(", StringComparison.Ordinal)) && !t.Expected.Contains("ERROR") && !t.Expected.Contains("MISSING"))
             .ToList();
@@ -33,9 +35,8 @@ internal static class Grammars
         foreach (var test in tests)
         {
             var length = block.Length;
-            block.Append(test.Input).Append('\n');
-            using var tree = parser.Parse(block.ToString());
-            if (tree.HasError)
+            block.Append(test.Input).Append(separator);
+            if (HasError(parser, block.ToString()))
             {
                 block.Length = length;
             }
@@ -46,13 +47,32 @@ internal static class Grammars
             throw new ArgumentException($"No corpus input of the grammar '{name}' parses without errors.", nameof(name));
         }
 
+        var text = block.ToString();
+        if (HasError(parser, text + text))
+        {
+            return text;
+        }
+
         var builder = new StringBuilder();
         while (builder.Length < size)
         {
-            builder.Append(block);
+            builder.Append(text);
         }
 
         return builder.ToString();
+    }
+
+    /// <summary>The separators of the corpus inputs, for the grammars where a new line isn't enough.</summary>
+    private static readonly Dictionary<string, string> Separators = new()
+    {
+        // The tests start with <?php: the PHP code is closed after each one
+        ["php"] = "\n?>\n",
+    };
+
+    private static bool HasError(Parser parser, string input)
+    {
+        using var tree = parser.Parse(input);
+        return tree.HasError;
     }
 
     private static readonly Dictionary<string, Language> Languages = [];
