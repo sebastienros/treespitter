@@ -74,14 +74,34 @@ internal sealed class OrderedMap<TKey, TValue>
 
     public IReadOnlyList<TValue> Values => _values;
 
-    public IEnumerable<KeyValuePair<TKey, TValue>> Entries
+    /// <summary>The entries in insertion order, enumerated without allocations (the minimization compares states a lot).</summary>
+    public EntryCollection Entries => new(this);
+
+    /// <summary>The entries of a map, a struct enumerable for <c>foreach</c>.</summary>
+    public readonly struct EntryCollection(OrderedMap<TKey, TValue> map) : IEnumerable<KeyValuePair<TKey, TValue>>
     {
-        get
+        public Enumerator GetEnumerator() => new(map);
+
+        IEnumerator<KeyValuePair<TKey, TValue>> IEnumerable<KeyValuePair<TKey, TValue>>.GetEnumerator() => GetEnumerator();
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    /// <summary>Enumerates the entries, the ones added during the enumeration included.</summary>
+    public struct Enumerator(OrderedMap<TKey, TValue> map) : IEnumerator<KeyValuePair<TKey, TValue>>
+    {
+        private int _index = -1;
+
+        public readonly KeyValuePair<TKey, TValue> Current => new(map._keys[_index], map._values[_index]);
+
+        readonly object System.Collections.IEnumerator.Current => Current;
+
+        public bool MoveNext() => ++_index < map._keys.Count;
+
+        public void Reset() => _index = -1;
+
+        public readonly void Dispose()
         {
-            for (var i = 0; i < _keys.Count; i++)
-            {
-                yield return new KeyValuePair<TKey, TValue>(_keys[i], _values[i]);
-            }
         }
     }
 

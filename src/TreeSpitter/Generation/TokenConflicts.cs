@@ -329,24 +329,25 @@ internal sealed class CoincidentTokenIndex
     {
         _n = lexicalGrammar.Variables.Count;
         _entries = new List<int>[_n * _n];
+        // The pairs of terminals of each state, a pair and its reverse having the same entry
+        var terminals = new List<int>();
         for (var stateIndex = 0; stateIndex < table.States.Count; stateIndex++)
         {
             var keys = table.States[stateIndex].TerminalEntries.Keys;
-            foreach (var symbol in keys)
+            terminals.Clear();
+            for (var k = 0; k < keys.Count; k++)
             {
-                if (!symbol.IsTerminal)
+                if (keys[k].IsTerminal)
                 {
-                    continue;
+                    terminals.Add(keys[k].Index);
                 }
+            }
 
-                foreach (var other in keys)
+            for (var i = 0; i < terminals.Count; i++)
+            {
+                for (var j = i; j < terminals.Count; j++)
                 {
-                    if (!other.IsTerminal)
-                    {
-                        continue;
-                    }
-
-                    var index = Index(symbol.Index, other.Index);
+                    var index = Index(terminals[i], terminals[j]);
                     var list = _entries[index] ??= [];
                     if (list.Count == 0 || list[list.Count - 1] != stateIndex)
                     {

@@ -594,7 +594,11 @@ internal sealed class Minimizer(ParseTable parseTable, SyntaxGrammar syntaxGramm
         }
 
         TableBuilder.SplitStateIdGroups(parseTable.States, stateIdsByGroupId, groupIdsByStateId, 0, StatesConflict);
-        while (TableBuilder.SplitStateIdGroups(parseTable.States, stateIdsByGroupId, groupIdsByStateId, 0, StateSuccessorsDiffer))
+
+        // The successors of the states, sorted by symbol: the groups are split until no state of a group has a successor
+        // in another group than the one of another state of the group, which compares every pair of states many times
+        var successors = parseTable.States.Select(Successors.Of).ToArray();
+        while (TableBuilder.SplitStateIdGroups(successors, stateIdsByGroupId, groupIdsByStateId, 0, Successors.Differ))
         {
         }
 
@@ -665,45 +669,112 @@ internal sealed class Minimizer(ParseTable parseTable, SyntaxGrammar syntaxGramm
         return false;
     }
 
-    private static bool StateSuccessorsDiffer(ParseState state1, ParseState state2, int[] groupIdsByStateId)
+    /// <summary>
+    /// The successors of a state for tree-sitter's <c>state_successors_differ</c>: the targets of the terminals whose last action is
+    /// a shift, and the gotos of the non-terminals (-1 for a non-terminal extra), sorted by symbol to be compared by
+    /// merging instead of looking the symbols up.
+    /// </summary>
+    private sealed class Successors
     {
-        foreach (var (token, entry1) in state1.TerminalEntries.Entries)
+        private long[] _shiftKeys = [];
+        private int[] _shiftTargets = [];
+        private long[] _gotoKeys = [];
+        private int[] _gotoTargets = [];
+
+        public static Successors Of(ParseState state)
         {
-            var last1 = entry1.Actions[entry1.Actions.Count - 1];
-            if (last1.Kind == ParseActionKind.Shift && state2.TerminalEntries.TryGetValue(token, out var entry2))
+            var shifts = new List<(long Key, int Target)>();
+            foreach (var (token, entry) in state.TerminalEntries.Entries)
             {
-                var last2 = entry2.Actions[entry2.Actions.Count - 1];
-                if (last2.Kind == ParseActionKind.Shift && groupIdsByStateId[last1.State] != groupIdsByStateId[last2.State])
+                var last = entry.Actions[entry.Actions.Count - 1];
+                if (last.Kind == ParseActionKind.Shift)
                 {
-                    return true;
+                    shifts.Add((Key(token), last.State));
                 }
             }
+
+            var gotos = new List<(long Key, int Target)>();
+            foreach (var (symbol, action) in state.NonTerminalEntries.Entries)
+            {
+                gotos.Add((Key(symbol), action.IsShiftExtra ? -1 : action.State));
+            }
+
+            shifts.Sort((a, b) => a.Key.CompareTo(b.Key));
+            gotos.Sort((a, b) => a.Key.CompareTo(b.Key));
+            return new Successors
+            {
+                _shiftKeys = [.. shifts.Select(s => s.Key)],
+                _shiftTargets = [.. shifts.Select(s => s.Target)],
+                _gotoKeys = [.. gotos.Select(g => g.Key)],
+                _gotoTargets = [.. gotos.Select(g => g.Target)],
+            };
         }
 
-        foreach (var (symbol, s1) in state1.NonTerminalEntries.Entries)
+        /// <summary>
+        /// tree-sitter's <c>state_successors_differ</c>: whether a terminal shifts to, or a non-terminal goes to, states of
+        /// different groups in both states.
+        /// </summary>
+        public static bool Differ(Successors state1, Successors state2, int[] groupIdsByStateId)
         {
-            if (state2.NonTerminalEntries.TryGetValue(symbol, out var s2))
+            int i = 0, j = 0;
+            while (i < state1._shiftKeys.Length && j < state2._shiftKeys.Length)
             {
-                if (s1.IsShiftExtra && s2.IsShiftExtra)
+                var key1 = state1._shiftKeys[i];
+                var key2 = state2._shiftKeys[j];
+                if (key1 < key2)
                 {
-                    continue;
+                    i++;
                 }
-
-                if (!s1.IsShiftExtra && !s2.IsShiftExtra)
+                else if (key2 < key1)
                 {
-                    if (groupIdsByStateId[s1.State] != groupIdsByStateId[s2.State])
+                    j++;
+                }
+                else
+                {
+                    if (groupIdsByStateId[state1._shiftTargets[i]] != groupIdsByStateId[state2._shiftTargets[j]])
                     {
                         return true;
                     }
 
-                    continue;
+                    i++;
+                    j++;
                 }
-
-                return true;
             }
+
+            i = 0;
+            j = 0;
+            while (i < state1._gotoKeys.Length && j < state2._gotoKeys.Length)
+            {
+                var key1 = state1._gotoKeys[i];
+                var key2 = state2._gotoKeys[j];
+                if (key1 < key2)
+                {
+                    i++;
+                }
+                else if (key2 < key1)
+                {
+                    j++;
+                }
+                else
+                {
+                    var target1 = state1._gotoTargets[i];
+                    var target2 = state2._gotoTargets[j];
+                    if (target1 >= 0 && target2 >= 0
+                        ? groupIdsByStateId[target1] != groupIdsByStateId[target2]
+                        : target1 >= 0 || target2 >= 0)
+                    {
+                        return true;
+                    }
+
+                    i++;
+                    j++;
+                }
+            }
+
+            return false;
         }
 
-        return false;
+        private static long Key(Symbol symbol) => ((long)symbol.Kind << 32) | (uint)symbol.Index;
     }
 
     private static bool EntriesConflict(ParseTableEntry entry1, ParseTableEntry entry2, int[] groupIdsByStateId)
