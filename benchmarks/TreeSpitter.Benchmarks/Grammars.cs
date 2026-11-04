@@ -29,7 +29,7 @@ internal static class Grammars
         var parser = new Parser(GeneratedLanguage(name));
         var separator = Separators.GetValueOrDefault(name, "\n");
         var tests = Testing.Corpus.Load(System.IO.Path.Combine(Root(), "grammars", name, "corpus"))
-            .Where(t => !t.Skip && !t.Attributes.Any(a => a.StartsWith(":language(", StringComparison.Ordinal)) && !t.Expected.Contains("ERROR") && !t.Expected.Contains("MISSING"))
+            .Where(t => !t.Skip && t.Attributes.All(a => !a.StartsWith(":language(", StringComparison.Ordinal) || a == $":language({name})" || a == $":language({name.Replace('-', '_')})") && !t.Expected.Contains("ERROR") && !t.Expected.Contains("MISSING"))
             .ToList();
         var block = new StringBuilder();
         foreach (var test in tests)
