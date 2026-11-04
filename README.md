@@ -258,6 +258,8 @@ treespitter info <grammar>                                        prints the siz
 treespitter compile <grammar> [-o file.tsl]                       writes the compiled tables
 treespitter generate <grammar|file.tsl> [-o file.cs] [--namespace ns] [--class name]
                                                                    generates the C# source of a precompiled parser
+treespitter generate-batch <file> [--parallelism n]               generates the parsers listed in a file, in parallel
+                                                                   (grammar.json, file.cs, namespace, class, scanner)
 treespitter parse <grammar> <file|-> [--time]                     prints the syntax tree
 treespitter test <grammar> <corpus> [-v] [--filter text]          runs tree-sitter corpus tests
 ```

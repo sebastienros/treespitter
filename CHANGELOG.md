@@ -60,6 +60,11 @@ releases are `v*.*.*` tags, see [docs/release.md](docs/release.md).
   states and doesn't compare the states equivalent to an earlier state of their group, the token conflicts are computed
   before the parse table, and the enums are compared without boxing (see "The cost of the generation" in
   docs/design.md).
+- `TreeSpitter.Languages` compiles its 27 grammars with the new `treespitter generate-batch` command instead of the
+  source generator: in parallel, once for its two target frameworks instead of twice, and only the grammars which
+  changed (the generated sources are the same). With the generator before the change above, a clean build of the
+  solution took 231 to 238 s instead of 387 to 636 s, and a build after a change of a scanner or a grammar 66 to 76 s
+  instead of 342 s; with both changes, a clean build takes 150 s.
 - Regular expressions use Unicode simple case folding for the `i` flag, fold the leaves of a class before the
   negations, negate `\p{name!=value}` and reject non-ASCII byte classes in `(?-u:...)`.
 
