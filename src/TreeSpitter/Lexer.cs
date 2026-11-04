@@ -200,10 +200,12 @@ public interface ILexFunction
     bool LexKeyword(Lexer lexer, int state);
 
     /// <summary>
-    /// Looks up the bytes of a word token in the keywords of the language: returns the symbol of the keyword, -1 when
-    /// the token isn't a keyword, or -2 when <see cref="LexKeyword"/> must run (the keywords aren't a set of strings).
+    /// Looks up the bytes of a word token, from <paramref name="start"/> to <paramref name="end"/> in the input, in the
+    /// keywords of the language: returns the symbol of the keyword, -1 when the token isn't a keyword, or -2 when
+    /// <see cref="LexKeyword"/> must run (the keywords aren't a set of strings). The input is given whole, so that the
+    /// lookup can read the bytes after a short token at once.
     /// </summary>
-    int MatchKeyword(byte[] input, int start, int end);
+    int MatchKeyword(ReadOnlySpan<byte> input, int start, int end);
 }
 
 /// <summary>
@@ -231,7 +233,7 @@ public readonly struct TableLexFunction : ILexFunction
     public bool LexKeyword(Lexer lexer, int state) => Run(_keyword, lexer, state);
 
     /// <inheritdoc />
-    public int MatchKeyword(byte[] input, int start, int end) => _keywords is null ? KeywordTable.UseAutomaton : _keywords.Lookup(input, start, end);
+    public int MatchKeyword(ReadOnlySpan<byte> input, int start, int end) => _keywords is null ? KeywordTable.UseAutomaton : _keywords.Lookup(input, start, end);
 
     private static bool Run(LexAutomaton table, Lexer lexer, int state)
     {

@@ -99,8 +99,8 @@ public static class CSharpGenerator
         writer.Line();
         var keywords = language.Keywords;
         writer.Line(keywords is not null
-            ? "public int MatchKeyword(byte[] input, int start, int end) => MatchKeywords(new global::System.ReadOnlySpan<byte>(input, start, end - start));"
-            : "public int MatchKeyword(byte[] input, int start, int end) => _tables.MatchKeyword(input, start, end);");
+            ? "public int MatchKeyword(global::System.ReadOnlySpan<byte> input, int start, int end) => MatchKeywords(input.Slice(start, end - start));"
+            : "public int MatchKeyword(global::System.ReadOnlySpan<byte> input, int start, int end) => _tables.MatchKeyword(input, start, end);");
         writer.Close();
 
         if (keywords is not null)

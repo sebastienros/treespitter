@@ -68,7 +68,7 @@ internal sealed class KeywordTable
 
     /// <summary>The keyword symbol of a token, <see cref="NotFound"/> or <see cref="UseAutomaton"/>.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public int Lookup(byte[] input, int start, int end)
+    public int Lookup(ReadOnlySpan<byte> input, int start, int end)
     {
         var length = end - start;
         if ((uint)(length - 1) >= (uint)_maxLength)
@@ -80,7 +80,7 @@ internal sealed class KeywordTable
         ulong head;
         if (start + 8 <= input.Length)
         {
-            head = BinaryPrimitives.ReadUInt64LittleEndian(new ReadOnlySpan<byte>(input, start, 8));
+            head = BinaryPrimitives.ReadUInt64LittleEndian(input.Slice(start, 8));
             if (length < 8)
             {
                 head &= (1UL << (length * 8)) - 1;
@@ -102,7 +102,7 @@ internal sealed class KeywordTable
             }
 
             if (entryLength == length && _heads[index] == head &&
-                (length <= 8 || new ReadOnlySpan<byte>(input, start + 8, length - 8).SequenceEqual(_tails[index])))
+                (length <= 8 || input.Slice(start + 8, length - 8).SequenceEqual(_tails[index])))
             {
                 return _values[index];
             }
@@ -115,7 +115,7 @@ internal sealed class KeywordTable
     private int Index(ulong head, int length) => (int)(((head ^ ((ulong)length << 59)) * 0x9E3779B97F4A7C15UL) >> _shift);
 
     /// <summary>The first 8 bytes of a key, little-endian, zero-padded.</summary>
-    private static ulong Head(byte[] bytes, int start, int length)
+    private static ulong Head(ReadOnlySpan<byte> bytes, int start, int length)
     {
         ulong head = 0;
         var count = Math.Min(length, 8);

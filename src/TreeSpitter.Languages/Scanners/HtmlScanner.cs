@@ -20,8 +20,8 @@ public sealed class HtmlScanner : IExternalScanner
     private const int RawText = 7;
     private const int Comment = 8;
 
-    private static readonly byte[] ScriptEndDelimiter = "</SCRIPT"u8.ToArray();
-    private static readonly byte[] StyleEndDelimiter = "</STYLE"u8.ToArray();
+    private static ReadOnlySpan<byte> ScriptEndDelimiter => "</SCRIPT"u8;
+    private static ReadOnlySpan<byte> StyleEndDelimiter => "</STYLE"u8;
 
     // Array(Tag) tags
     private readonly List<Tag> _tags = [];
@@ -718,7 +718,7 @@ public sealed class HtmlScanner : IExternalScanner
         return TagType.Custom;
     }
 
-    private static bool Equal(byte[] name, List<byte> other)
+    private static bool Equal(ReadOnlySpan<byte> name, List<byte> other)
     {
         for (var i = 0; i < name.Length; i++)
         {

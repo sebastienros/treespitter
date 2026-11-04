@@ -3,7 +3,7 @@ namespace TreeSpitter.Languages.Scanners;
 // A port of src/unicode.h of tree-sitter-haskell: the bitmaps of the character classes of the scanner.
 public sealed partial class HaskellScanner
 {
-    private static readonly byte[] BitmapIdentifier1 =
+    private static ReadOnlySpan<byte> BitmapIdentifier1 =>
     [
         0xff, 3, 0xfe, 0xff, 0xff, 7, 0xfe, 0xff, 0xff, 7, 0, 0, 0, 0, 0, 4, 0x2c, 0x76, 0xff, 0xff, 0x7f, 0xff, 0xff,
         0xff, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -114,7 +114,7 @@ public sealed partial class HaskellScanner
         return (BitmapIdentifier1[offset >> 3] & (1u << (offset & 7))) > 0;
     }
 
-    private static readonly byte[] BitmapIdentifier2 =
+    private static ReadOnlySpan<byte> BitmapIdentifier2 =>
     [
         0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
         0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -149,7 +149,7 @@ public sealed partial class HaskellScanner
         return (BitmapIdentifier2[offset >> 3] & (1u << (offset & 7))) > 0;
     }
 
-    private static readonly byte[] BitmapIdentifier3 =
+    private static ReadOnlySpan<byte> BitmapIdentifier3 =>
     [
         1, 0xe0, 0xff, 0xff, 0xf, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -474,7 +474,7 @@ public sealed partial class HaskellScanner
         return (BitmapIdentifier3[offset >> 3] & (1u << (offset & 7))) > 0;
     }
 
-    private static readonly byte[] BitmapIdentifier4 =
+    private static ReadOnlySpan<byte> BitmapIdentifier4 =>
     [
         1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -598,7 +598,7 @@ public sealed partial class HaskellScanner
         return (BitmapIdentifier4[offset >> 3] & (1u << (offset & 7))) > 0;
     }
 
-    private static readonly byte[] BitmapIdentifier5 =
+    private static ReadOnlySpan<byte> BitmapIdentifier5 =>
     [
         0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
         0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -630,7 +630,7 @@ public sealed partial class HaskellScanner
             false;
     }
 
-    private static readonly byte[] BitmapVaridStart1 =
+    private static ReadOnlySpan<byte> BitmapVaridStart1 =>
     [
         0xff, 0xff, 0xff, 3, 0, 0, 0, 0, 0, 2, 0x10, 2, 0, 0, 0, 0xc0, 0xff, 0xff, 0xbf, 0x7f, 0x55, 0x55, 0x55, 0x55,
         0x55, 0x55, 0xd5, 0xaa, 0xaa, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0xea, 0x94, 0x18, 0x12, 0x27, 0x95, 0x96,
@@ -734,7 +734,7 @@ public sealed partial class HaskellScanner
         return (BitmapVaridStart1[offset >> 3] & (1u << (offset & 7))) > 0;
     }
 
-    private static readonly byte[] BitmapVaridStart2 =
+    private static ReadOnlySpan<byte> BitmapVaridStart2 =>
     [
         0xff, 0xff, 0xbf, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
         0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -768,7 +768,7 @@ public sealed partial class HaskellScanner
         return (BitmapVaridStart2[offset >> 3] & (1u << (offset & 7))) > 0;
     }
 
-    private static readonly byte[] BitmapVaridStart3 =
+    private static ReadOnlySpan<byte> BitmapVaridStart3 =>
     [
         1, 0xe0, 0xff, 0xff, 0xf, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -1083,7 +1083,7 @@ public sealed partial class HaskellScanner
         return (BitmapVaridStart3[offset >> 3] & (1u << (offset & 7))) > 0;
     }
 
-    private static readonly byte[] BitmapVaridStart4 =
+    private static ReadOnlySpan<byte> BitmapVaridStart4 =>
     [
         1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -1221,7 +1221,7 @@ public sealed partial class HaskellScanner
             false;
     }
 
-    private static readonly byte[] BitmapConidStart1 =
+    private static ReadOnlySpan<byte> BitmapConidStart1 =>
     [
         0xff, 0xff, 0xff, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x80, 0xff, 0xff, 0xbf, 0x3f, 0, 0, 0, 0x80, 0xaa, 0xaa,
         0xaa, 0xaa, 0xaa, 0xaa, 0x2a, 0x55, 0x55, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0x15, 0x6b, 0xe7, 0xed, 0xd8,
@@ -1280,7 +1280,7 @@ public sealed partial class HaskellScanner
         return (BitmapConidStart1[offset >> 3] & (1u << (offset & 7))) > 0;
     }
 
-    private static readonly byte[] BitmapConidStart2 =
+    private static ReadOnlySpan<byte> BitmapConidStart2 =>
     [
         0x55, 0x55, 0x55, 0x55, 0x55, 0x15, 0, 0, 0x55, 0x55, 0x55, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0x54, 0x55, 0x54, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0, 0x6a, 0x55, 0x28, 0x45, 0x55, 0x55, 0x7d, 0x5f,
@@ -1297,7 +1297,7 @@ public sealed partial class HaskellScanner
         return (BitmapConidStart2[offset >> 3] & (1u << (offset & 7))) > 0;
     }
 
-    private static readonly byte[] BitmapConidStart3 =
+    private static ReadOnlySpan<byte> BitmapConidStart3 =>
     [
         0xff, 0xff, 0xff, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -1335,7 +1335,7 @@ public sealed partial class HaskellScanner
         return (BitmapConidStart3[offset >> 3] & (1u << (offset & 7))) > 0;
     }
 
-    private static readonly byte[] BitmapConidStart4 =
+    private static ReadOnlySpan<byte> BitmapConidStart4 =>
     [
         0xff, 0xff, 0xff, 0xff,
     ];
@@ -1350,7 +1350,7 @@ public sealed partial class HaskellScanner
         return (BitmapConidStart4[offset >> 3] & (1u << (offset & 7))) > 0;
     }
 
-    private static readonly byte[] BitmapConidStart5 =
+    private static ReadOnlySpan<byte> BitmapConidStart5 =>
     [
         0xff, 0xff, 0xff, 3, 0, 0, 0xf0, 0xff, 0xff, 0x3f, 0, 0, 0, 0xff, 0xff, 0xff, 3, 0, 0, 0xd0, 0x64, 0xde, 0x3f,
         0, 0, 0, 0xff, 0xff, 0xff, 3, 0, 0, 0xb0, 0xe7, 0xdf, 0x1f, 0, 0, 0, 0x7b, 0x5f, 0xfc, 1, 0, 0, 0xf0, 0xff,
@@ -1401,7 +1401,7 @@ public sealed partial class HaskellScanner
             false;
     }
 
-    private static readonly byte[] BitmapSymop1 =
+    private static ReadOnlySpan<byte> BitmapSymop1 =>
     [
         0x7f, 0x7e, 0, 0xfe, 0, 0, 0, 0xe8, 0, 0, 0, 0x28, 0, 0, 0, 0, 0xff, 0xe9, 0xe9, 0x40, 0, 0, 0x40, 0, 0, 0,
         0x40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -1499,7 +1499,7 @@ public sealed partial class HaskellScanner
         return (BitmapSymop1[offset >> 3] & (1u << (offset & 7))) > 0;
     }
 
-    private static readonly byte[] BitmapSymop2 =
+    private static ReadOnlySpan<byte> BitmapSymop2 =>
     [
         0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f, 0, 0, 0, 0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0x40, 0, 0,
@@ -1521,7 +1521,7 @@ public sealed partial class HaskellScanner
         return (BitmapSymop2[offset >> 3] & (1u << (offset & 7))) > 0;
     }
 
-    private static readonly byte[] BitmapSymop3 =
+    private static ReadOnlySpan<byte> BitmapSymop3 =>
     [
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xfe, 0xff, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x80, 0xff, 0x7f,
@@ -1584,7 +1584,7 @@ public sealed partial class HaskellScanner
         return (BitmapSymop3[offset >> 3] & (1u << (offset & 7))) > 0;
     }
 
-    private static readonly byte[] BitmapSymop4 =
+    private static ReadOnlySpan<byte> BitmapSymop4 =>
     [
         3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0xfe, 0xc3, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -1603,7 +1603,7 @@ public sealed partial class HaskellScanner
         return (BitmapSymop4[offset >> 3] & (1u << (offset & 7))) > 0;
     }
 
-    private static readonly byte[] BitmapSymop5 =
+    private static ReadOnlySpan<byte> BitmapSymop5 =>
     [
         9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -1702,7 +1702,7 @@ public sealed partial class HaskellScanner
             false;
     }
 
-    private static readonly byte[] BitmapSpace =
+    private static ReadOnlySpan<byte> BitmapSpace =>
     [
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,

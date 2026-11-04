@@ -7,7 +7,7 @@
   port close to them (same order of operations, same names), so the two can be diffed.
 - The pipeline is `grammar.js` → Jint → `Grammar` (src/TreeSpitter/Dsl, src/TreeSpitter/Grammars) → prepared grammar
   and NFA → LR(1) parse table and lexer DFAs (src/TreeSpitter/Generation) → `Language` (the "bytecode") → `Parser`
-  (the GLR virtual machine, `ParserEngine<TLexer>`) or a source-generated lexer. Regular expressions are converted to
+  (the GLR virtual machine, `ParserEngine<TLexer, TTable>`), or a source-generated language which embeds the tables. Regular expressions are converted to
   NFAs; never forward matching to `System.Text.RegularExpressions`.
 - The input is UTF-8 and positions are byte offsets, like tree-sitter. `Language` instances are immutable and shared;
   per-parse state lives in the parser engine (one per `Parser`), never in `Language`.
@@ -15,6 +15,11 @@
   `SubtreeArena.NewNode`) must not allocate per token: nodes live in arenas of structs. Measure every parser change with
   `benchmarks/TreeSpitter.Benchmarks` (`quick` for iterations, BenchmarkDotNet with `[MemoryDiagnoser]` for the
   numbers of a pull request) and put the numbers in the pull request.
+- Prefer `ReadOnlySpan<byte>` to `byte[]`: methods which only read bytes take a `ReadOnlySpan<byte>`, and constant byte
+  tables are `static ReadOnlySpan<byte> Name => [...]` properties, which the compiler points at the data of the
+  assembly (no allocation, no copy). This only holds for byte-sized elements (`byte`, `sbyte`, `bool`): a span of a
+  larger type allocates an array at each access on `netstandard2.0`, so those stay `static readonly` arrays. Arrays
+  remain where the bytes are stored (the input of a tree, the state of the lexer).
 - The `netstandard2.0` target is for .NET Framework hosts; keep it building and behaving like `net10.0` (polyfills come
   from Meziantou.Polyfill). The build is warning-free (`TreatWarningsAsErrors`) and public APIs are documented
   (`CS1591` is an error).
